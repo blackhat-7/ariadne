@@ -316,12 +316,14 @@ export function build() {
   const put = (geo, mode, e) => (groups[geo + '|' + mode] ||= []).push(e);
   if (VOXEL) {
     // every voxel of every node is one instance of a unit cube, grouped by animation mode
-    const model = (n) => n.type === 'part' ? partModel(kindOf(n.part), hashStr(n.key), n.part.clusterObj.color)
-      : n.type === 'external' ? externalModel(extOf(n.ext), hashStr(n.key), EXT[extOf(n.ext)].color) : CUBE;
+    const model = (n) => n.type === 'part' ? partModel(kindOf(n.part), hashStr(n.key), n.part.clusterObj.color, { size: n.part.size })
+      : n.type === 'external' ? externalModel(extOf(n.ext), hashStr(n.key), EXT[extOf(n.ext)].color, { name: n.ext.name || n.ext.id }) : CUBE;
     for (const n of nodes) {
       if (n.type === 'dock') continue;   // docks are islands
-      const m = model(n), cube = m === CUBE;
-      for (const v of voxEntries(m, n.scale, cube, cube ? n.base : null)) put('vox', v.mode, { node: n, ...v });
+      const m = model(n), cube = m === CUBE, list = voxEntries(m, n.scale, cube, cube ? n.base : null, n.type === 'part' ? 3.6 : 2.4);
+      for (const v of list) put('vox', v.mode, { node: n, ...v });
+      // tall buildings (big services) rise above the usual label height: lift the label onto the roof
+      if (n.type === 'part') n.part.label.pos.y = Math.max(n.part.label.pos.y, n.pos.y + Math.max(...list.map((v) => v.off.y + v.scale)));
     }
     for (const p of parts.values()) if (state.M.changes?.[p.id]) for (const v of voxEntries(RING, p.r, false, AMBER)) put('vox', 0, { node: p.node, gate: 'chg', ...v });
   } else {

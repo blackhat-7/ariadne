@@ -88,10 +88,10 @@ function cells(model) {
 }
 
 // Instance entries for one model: { mode, scale, off (world, from the node centre), color, aOff }. The model fits a
-// 2 x scale footprint and at most 2.4 x scale of height (under the node's label), base at pos.y - scale, or centred.
+// 2 x scale footprint and at most `height` x scale of height, base at pos.y - scale, or centred.
 // `color` overrides the model's colours.
-export function voxEntries(model, scale, centred = false, color = null) {
-  const [w, h, d] = model.size, u = Math.min((2 * scale) / Math.max(w, d), (2.4 * scale) / h), y0 = centred ? -(h * u) / 2 : -scale;
+export function voxEntries(model, scale, centred = false, color = null, height = 2.4) {
+  const [w, h, d] = model.size, u = Math.min((2 * scale) / Math.max(w, d), (height * scale) / h), y0 = centred ? -(h * u) / 2 : -scale;
   return cells(model).map((c) => ({ mode: c.mode, scale: u, off: new THREE.Vector3(c.at[0] * u, y0 + (c.at[1] + 0.5) * u, c.at[2] * u), color: color || c.color, aOff: c.aOff }));
 }
 

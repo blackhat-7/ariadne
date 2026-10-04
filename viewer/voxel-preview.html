@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Voxel Preview</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #f4d9b6; font: 600 12px system-ui, sans-serif; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0a1022; font: 600 12px system-ui, sans-serif; }
   canvas { display: block; }
-  .lb { position: absolute; transform: translate(-50%, 0); color: #4a3a2c; background: rgba(255, 250, 240, 0.72); padding: 2px 7px; border-radius: 6px; white-space: nowrap; pointer-events: none; }
+  .lb { position: absolute; transform: translate(-50%, 0); color: #dfe6f5; background: rgba(10, 16, 34, 0.7); padding: 2px 7px; border-radius: 6px; white-space: nowrap; pointer-events: none; }
   .lb i { font-style: normal; font-weight: 400; opacity: 0.7; }
 </style>
 <script type="importmap">
@@ -19,7 +19,8 @@
 </head>
 <body>
 <script type="module">
-// Showcase of every voxel model. ?view=models | islands | all (default).
+// Showcase of every voxel model, several seeds per kind, lit like the Voxel look's night scene.
+// ?view=parts | externals | islands | all (default), or one kind (?view=service). Services get growing code sizes along their row.
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
@@ -32,7 +33,7 @@ const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(2, devicePixelRatio));
 renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.95;
+renderer.toneMappingExposure = 1.1;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
@@ -40,25 +41,25 @@ document.body.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 const sky = document.createElement('canvas'); sky.width = 2; sky.height = 256;
 const sg = sky.getContext('2d'), grad = sg.createLinearGradient(0, 0, 0, 256);
-grad.addColorStop(0, '#9fc3e6'); grad.addColorStop(0.55, '#f6dcc0'); grad.addColorStop(1, '#f2b98f');
+grad.addColorStop(0, '#03050b'); grad.addColorStop(0.55, '#0a1022'); grad.addColorStop(1, '#1a1d3a');
 sg.fillStyle = grad; sg.fillRect(0, 0, 2, 256);
 scene.background = new THREE.CanvasTexture(sky); scene.background.colorSpace = THREE.SRGBColorSpace;
 
-scene.add(new THREE.HemisphereLight(0xfff1dc, 0x7a6a85, 0.75));
-const sun = new THREE.DirectionalLight(0xffe2bd, 2.3);
+scene.add(new THREE.HemisphereLight(0x4a5d92, 0x120f1a, 0.9));
+const sun = new THREE.DirectionalLight(0xb4c8ff, 1.6);
 sun.position.set(-60, 110, 70); sun.castShadow = true;
 sun.shadow.mapSize.set(4096, 4096); sun.shadow.radius = 4; sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.04;
-Object.assign(sun.shadow.camera, { left: -230, right: 230, top: 230, bottom: -230, near: 1, far: 600 });
+Object.assign(sun.shadow.camera, { left: -260, right: 260, top: 260, bottom: -260, near: 1, far: 700 });
 scene.add(sun);
 
-const ground = new THREE.Mesh(new THREE.PlaneGeometry(800, 800), new THREE.MeshStandardMaterial({ color: 0xd9bb98, roughness: 1 }));
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(1200, 1200), new THREE.MeshStandardMaterial({ color: 0x1c2238, roughness: 1 }));
 ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
 
 // Standard material plus a per-instance emissive strength that glows in the instance colour.
 const mat = new THREE.MeshStandardMaterial({ roughness: 0.82, metalness: 0 });
 mat.onBeforeCompile = (s) => {
   s.vertexShader = 'attribute float aEm;\nvarying float vEm;\n' + s.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvEm = aEm;');
-  s.fragmentShader = 'varying float vEm;\n' + s.fragmentShader.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * vEm * 2.0;');
+  s.fragmentShader = 'varying float vEm;\n' + s.fragmentShader.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * vEm * 1.4;');
 };
 const box = new THREE.BoxGeometry(1, 1, 1);
 const labels = [];
@@ -78,28 +79,29 @@ function add(model, x, y, z, name) {
 }
 
 const tints = ['#8fb3d9', '#c99bd6', '#8cc9a0', '#d8b46f', '#9aa6e0', '#e39a9a', '#7fc4c4', '#d9a37a', '#e0c070', '#a9a9b8', '#6fc3f0'];
-const models = [
-  ...['service', 'job', 'library', 'tool'].map((k, i) => [k, partModel(k, 11 + i, tints[i])]),
-  ...['db', 'queue', 'storage', 'cloud', 'saas', 'other'].map((k, i) => [k, externalModel(k, 21 + i, tints[4 + i])]),
-  ['cart', cart(tints[10])],
+const SEEDS = 8, sizes = [120, 400, 1200, 3500, 9000, 20000, 700, 2500];
+const names = ['Stripe', 'Twilio', 'Auth0', 'Mapbox', 'OpenAI', 'Sentry', 'Algolia', 'Plaid'];
+const PARTS = ['service', 'job', 'library', 'tool'], EXTS = ['db', 'queue', 'storage', 'cloud', 'saas', 'other'];
+const all = [
+  ...PARTS.map((k, i) => [k, (s) => partModel(k, 11 + s * 7, tints[(i + s) % 11], { size: sizes[s] }), (s) => (k === 'service' ? `${k} ${sizes[s]}` : k)]),
+  ...EXTS.map((k, i) => [k, (s) => externalModel(k, 21 + s * 5, tints[(4 + i) % 11], { name: names[s] }), () => k]),
+  ['cart', () => cart(tints[10]), () => 'cart', 1],
 ];
-const camera = new THREE.PerspectiveCamera(30, innerWidth / innerHeight, 1, 2000);
-
-if (view !== 'islands') {
-  const z0 = view === 'all' ? 30 : 0;
-  models.forEach(([name, mdl], i) => { const row = i < 6 ? 0 : 1, col = row ? i - 6 : i; add(mdl, (col - (row ? 2 : 2.5)) * 22, 0, z0 + row * 34 - 17, name); });
+const rows = all.filter(([k]) => view === 'all' || k === view || (view === 'parts' && PARTS.includes(k)) || (view === 'externals' && !PARTS.includes(k)));
+rows.forEach(([, make, label, n = SEEDS], row) => { for (let s = 0; s < n; s++) add(make(s), (s - (SEEDS - 1) / 2) * 26, 0, row * 30, label(s)); });
+let zMax = Math.max(0, rows.length - 1) * 30;
+if (view === 'all' || view === 'islands') {
+  const z0 = rows.length ? zMax + 70 : 0;
+  [[10, '#a3b08f', -135], [15, '#8cc9a0', -100], [20, '#c99bd6', -45], [27, '#8fb3d9', 30], [27, '#e0c070', 110]].forEach(([R, t, x], i) => add(island(101 + i, R, t), x, 6, z0, `island r${R}`));
+  zMax = z0;
 }
-if (view !== 'models') {
-  const z0 = view === 'all' ? -50 : 0;
-  [[10, '#8cc9a0', -62], [18, '#c99bd6', -10], [28, '#8fb3d9', 58]].forEach(([R, t, x], i) => add(island(101 + i, R, t), x, 6, z0, `island r${R}`));
-}
-if (view === 'models') { camera.position.set(0, 60, 128); camera.lookAt(0, 4, 2); }
-else if (view === 'islands') { camera.position.set(0, 70, 170); camera.lookAt(0, 18, 0); }
-else { camera.position.set(0, 95, 180); camera.lookAt(0, 4, -8); }
+const camera = new THREE.PerspectiveCamera(30, innerWidth / innerHeight, 1, 4000);
+const zc = zMax / 2, D = !rows.length ? 300 : rows.length === 1 ? 200 : Math.max(240, zMax * 1.05 + 150);
+camera.position.set(0, D * 0.8, zc + D * 0.75); camera.lookAt(0, 0, zc);
 
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
-composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.3, 0.35, 0.9));
+composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.6, 0.5, 0.82));
 composer.addPass(new OutputPass());
 composer.render();
 

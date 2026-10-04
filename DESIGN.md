@@ -49,6 +49,7 @@ Direction: visionOS meets a pro Apple app. Calm, precise, crisp. Futuristic thro
 - Settings → Appearance: Glass (default) | Voxel, saved in localStorage `ariadne.theme`; `?theme=voxel` forces it. Switching reloads.
 - Only the world changes (voxel.js + models in voxels.js); layout, picking, LOD, flows, labels, HUD, metro board, Lens and drawer are shared.
 - Style: MagicaVoxel-like renders, not Minecraft. Floating islands per domain and dock, small procedural models per kind, a voxel cart for flows.
+- Variation: each kind stays recognisable, but the seed (the node key) picks a variant, so no two look alike. Services grow 2–7 floors with code size and vary footprint, facade, window pattern, roof and details; jobs, libraries, tools and externals have 2–4 variants each. Islands get their own mix of trees, rocks, bushes, flowers, stepping-stone paths and glowing lamp posts, on the rim only.
 - Rendering: instanced unit cubes, sun with PCF soft shadows following the focus, GTAO, ACES, cool-to-warm sky, gentle fog, bloom on emissive voxels only.
 - Faded things bleach toward the fog instead of turning see-through; the world dissolves (ordered dither) and the sky dims when a call board opens.
 
