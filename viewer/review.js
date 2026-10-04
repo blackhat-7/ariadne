@@ -229,7 +229,7 @@ function setReview(j, head, base = '') {
   const hash = head ? `#review=${head.startsWith('pr:') ? head : 'branch:' + head}${base ? '&base=' + encodeURIComponent(base) : ''}` : '#review';
   if (location.hash !== hash) history.replaceState(history.state, '', hash);   // keeps back/forward's entry (nav.js)
   showPanel(true);
-  markReview(Object.fromEntries((j.parts || []).filter((p) => RISK_COLOR[p.risk]).map((p) => [p.id, RISK_COLOR[p.risk]])));
+  markReview(Object.fromEntries(j.parts.filter((p) => RISK_COLOR[p.risk]).map((p) => [p.id, RISK_COLOR[p.risk]])));
   R.cur = null; render();
   loadMapStatus();
   reloadFile();   // a changed file shows as its diff, or as plain code again
@@ -282,7 +282,7 @@ function chips(f) {
 }
 
 function rowHtml(f) {
-  const on = f.id === R.cur, done = R.done.has(f.id), e = f.blast?.entries || [], callers = f.blast?.callers || [];
+  const on = f.id === R.cur, done = R.done.has(f.id), e = f.blast.entries, callers = f.blast.callers;
   return `<div class="rv-row${on ? ' cur' : ''}${done ? ' done' : ''}" data-id="${esc(f.id)}">
     <label class="rv-ck" title="Reviewed (r)"><input type="checkbox"${done ? ' checked' : ''}><i></i></label>
     <div class="rv-main"><div class="rv-nmrow">${dot(f.risk)}<button class="rv-nm" title="${esc(f.file)}${f.head ? ':' + f.head.start : ''}">${esc(f.name)}</button>${STATUS[f.status] ? `<span class="rv-st ${esc(f.status)}">${STATUS[f.status]}</span>` : ''}<span class="rv-file">${esc(short(f.file))}</span></div>
@@ -304,18 +304,18 @@ function render() {
       <div class="rv-acts"><button class="btn primary" data-rv="pick">${I.branch}Pick a branch or PR</button><button class="btn" data-rv="retry">${I.replay}Retry</button>${d ? '<button class="btn" data-rv="dismiss">Back to the review</button>' : ''}</div></div>`;
     return;
   }
-  const s = d.stats || {}, fx = s.functions || {}, total = d.functions.length, done = d.functions.filter((f) => R.done.has(f.id)).length;
+  const s = d.stats, fx = s.functions, total = d.functions.length, done = d.functions.filter((f) => R.done.has(f.id)).length;
   const pr = d.pr ? `<a class="rv-title" href="${esc(d.pr.url)}" target="_blank" rel="noopener" title="Open on GitHub">${esc(d.pr.title)} <span>#${d.pr.number}</span></a>`
-    : `<div class="rv-title">${esc(R.head ? headLabel(R.head) : d.head?.ref && !/^[0-9a-f]{40}$/.test(d.head.ref) ? d.head.ref : 'Working copy')}</div>`;
-  const revs = `<div class="rv-revs mono"><span title="${esc(d.base?.rev || '')}">${esc(d.base?.ref ? `${d.base.ref} ` : '')}${esc(d.base?.short || '?')}</span>${I.outArrow}<span title="${esc(d.head?.rev || '')}">${esc(d.head?.short || '?')}${d.head?.dirty ? ' + uncommitted' : ''}</span></div>`;
-  const stats = `<div class="rv-stats"><span><b>${s.files ?? d.files.length}</b> files</span><span><b>${(fx.added || 0) + (fx.removed || 0) + (fx.modified || 0)}</b> functions${fx.added || fx.removed ? ` <em>(${[fx.added && `+${fx.added}`, fx.removed && `−${fx.removed}`].filter(Boolean).join(' ')})</em>` : ''}</span>
+    : `<div class="rv-title">${esc(R.head ? headLabel(R.head) : 'Working copy')}</div>`;
+  const revs = `<div class="rv-revs mono"><span title="${esc(d.base.rev)}">${esc(`${d.base.ref} ${d.base.short}`)}</span>${I.outArrow}<span title="${esc(d.head.rev)}">${esc(d.head.short)}${d.head.dirty ? ' + uncommitted' : ''}</span></div>`;
+  const stats = `<div class="rv-stats"><span><b>${s.files}</b> files</span><span><b>${fx.added + fx.removed + fx.modified}</b> functions${fx.added || fx.removed ? ` <em>(${[fx.added && `+${fx.added}`, fx.removed && `−${fx.removed}`].filter(Boolean).join(' ')})</em>` : ''}</span>
     <span class="rv-sev">${['high', 'medium', 'low'].map((k) => `<span class="${k}" title="${k} severity changes">${dot(k)}${s[k] || 0}</span>`).join('')}</span></div>`;
-  const gates = (d.gates || []).length ? `<div class="rv-gates">${d.gates.map((g) => `<button class="rv-gate ${esc(g.op)}" data-ref="${esc(g.refs?.[0] || '')}" title="${esc(`${g.kind} ${g.op}: ${(g.refs || []).join(', ')}`)}">${g.kind === 'flag' ? I.flag : I.env}<span>${g.op === 'added' ? '+' : g.op === 'removed' ? '−' : '~'} ${esc(g.name)}</span></button>`).join('')}</div>` : '';
+  const gates = d.gates.length ? `<div class="rv-gates">${d.gates.map((g) => `<button class="rv-gate ${esc(g.op)}" data-ref="${esc(g.refs[0] || '')}" title="${esc(`${g.kind} ${g.op}: ${g.refs.join(', ')}`)}">${g.kind === 'flag' ? I.flag : I.env}<span>${g.op === 'added' ? '+' : g.op === 'removed' ? '−' : '~'} ${esc(g.name)}</span></button>`).join('')}</div>` : '';
   const empty = !d.functions.length && !d.files.length;
   const groups = empty ? [] : visible();
   R.rows = groups.flatMap((g) => g.fns);
   if (!R.rows.some((f) => f.id === R.cur)) R.cur = R.rows[0]?.id || null;
-  const list = empty ? `<div class="rv-state">${I.info}<b>No changes against base</b><span>${esc(d.base?.ref || d.base?.short || 'The base')} and this head have the same code.</span></div>`
+  const list = empty ? `<div class="rv-state">${I.info}<b>No changes against base</b><span>${esc(d.base.ref)} and this head have the same code.</span></div>`
     : !groups.length ? `<div class="rv-state"><b>Nothing matches these filters</b><button class="btn" data-rv="clearf">Show all</button></div>`
     : groups.map((g) => `<section class="rv-grp"><h4 data-part="${esc(g.id)}">${g.fns.length ? dot(g.fns[0].risk) : ''}<button title="Show on the map">${esc(partName(g.id))}</button><em>${g.fns.length || plural(g.files.length, 'file')}</em></h4>
         ${g.fns.map(rowHtml).join('')}
@@ -336,8 +336,8 @@ function render() {
 
 function narrative() {
   const n = R.narr; if (!n) return '';
-  return `<div class="rv-narr"><p>${esc(n.summary)}</p>${(n.items || []).length ? `<ul>${n.items.map((it) => `<li>${esc(it.text)}${(it.refs || []).map((r) => `<button class="rv-ref" data-ref="${esc(r)}">${esc(short(r))}</button>`).join('')}</li>`).join('')}</ul>` : ''}
-    ${(n.mismatches || []).map((m) => `<div class="rv-warn">${I.info}<span><b>Differs from the PR description:</b> ${esc(m)}</span></div>`).join('')}</div>`;
+  return `<div class="rv-narr"><p>${esc(n.summary)}</p>${n.items.length ? `<ul>${n.items.map((it) => `<li>${esc(it.text)}${it.refs.map((r) => `<button class="rv-ref" data-ref="${esc(r)}">${esc(short(r))}</button>`).join('')}</li>`).join('')}</ul>` : ''}
+    ${n.mismatches.map((m) => `<div class="rv-warn">${I.info}<span><b>Differs from the PR description:</b> ${esc(m)}</span></div>`).join('')}</div>`;
 }
 
 /* ---------------- selection, opening, blast radius ---------------- */
@@ -484,7 +484,7 @@ async function watchMap() {
 }
 
 /* ---------------- tour ---------------- */
-const tourList = () => (R.data.tour || []).map(fnById).filter(Boolean);
+const tourList = () => R.data.tour.map(fnById).filter(Boolean);
 
 function playTour() {
   const list = tourList(); if (!list.length) return;

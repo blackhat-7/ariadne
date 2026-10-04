@@ -441,7 +441,7 @@ def build(args):
     args.output = args.output or str(default_map(repo))
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     # Parts whose files are unchanged since they were last mapped (on any branch) are reused as they are.
-    pl = plan(repo, fresh=getattr(args, "fresh", False))
+    pl = plan(repo, fresh=args.fresh)
     slices, owner, ids, prints, cached, todo = (pl[k] for k in ("slices", "owner", "ids", "prints", "cached", "todo"))
     if not slices:
         sys.exit("no source folders found")
@@ -677,7 +677,7 @@ def assemble(args):
     overview = overview_path(repo, parts)
     if args.no_llm:
         summary, clusters, flows, kinds = "", folder_clusters(parts), [], {}
-    elif overview.exists() and not getattr(args, "fresh", False):
+    elif overview.exists() and not args.fresh:
         summary, clusters, flows, kinds = json.loads(overview.read_text())
     else:
         choose_model(args, f"Assembling {len(parts)} parts: one call to name domains and find system flows.")
@@ -1344,7 +1344,8 @@ class Reviews:
             if self.running():
                 raise RuntimeError("a map refresh is already running")
             args = argparse.Namespace(repo=str(tree), output=str(out), agent=agent or None, model=model or None,
-                                      yes=True, fresh=False, batches=None, jobs=None, base=None, no_llm=False)
+                                      yes=True, fresh=False, batches=None, jobs=None, base=None, no_llm=False,
+                                      progress=None)
             self.job = job = {"args": args, "start": time.time(), "phase": "preparing", "done": False, "error": None}
         threading.Thread(target=self.run, args=(job, tree, out, rev, build_map), daemon=True).start()
 
@@ -1375,7 +1376,7 @@ class Reviews:
         job = self.job
         if job is None:
             return None
-        p = getattr(job["args"], "progress", None)
+        p = job["args"].progress
         assembling = job["phase"] == "mapping" and p is not None and p.stopped.is_set()
         return {"phase": "assembling" if assembling else job["phase"], "elapsed": int(time.time() - job["start"]), "done": job["done"],
                 "error": job["error"], "batches": [p.finished, p.total] if p else None,
@@ -1419,8 +1420,8 @@ class Reviews:
         paths = [x["path"] for x in r["files"] if not x["generated"] and not x["test"]][:30]
         span = [r["base"]["rev"]] + ([self.rev] if self.rev else [])
         hunks = (git(self.root, "diff", "-U3", *span, "--", *paths) or "") if paths else ""
-        pr = r.get("pr") or {}
-        prompt = (NARRATIVE_PROMPT + "\n# PR description\n" + (f"{pr.get('title', '')}\n{pr.get('body') or ''}" if pr else "(none)")
+        pr = r["pr"]
+        prompt = (NARRATIVE_PROMPT + "\n# PR description\n" + (f"{pr['title']}\n{pr['body']}" if pr else "(none)")
                   + "\n\n# Facts\n" + "\n".join(facts) + "\n\n# Hunks\n" + hunks[:60000])
         cache = Path.home() / ".cache" / "ariadne" / "narratives" / (
             hashlib.sha1(f"{prompt}\0{agent}\0{model}".encode()).hexdigest() + ".json")

@@ -387,7 +387,7 @@ const effectLook = (n) => {
 function nodeHtml({ n, x, y, w, h, lnW, codeLines, labelLines, label }) {
   const icon = { call: I.fn, loop: I.replay, switch: I.branch, try: I.shield }[n.kind] || '';
   const fx = n.kind === 'effect' ? effectLook(n) : null;
-  const cs = X.rv ? (n.changes || []).map((ci) => X.rv.changes[ci]).sort((a, b) => /invert/i.test(b.why) - /invert/i.test(a.why) || 'hml'.indexOf(a.severity[0]) - 'hml'.indexOf(b.severity[0])) : [];
+  const cs = X.rv ? n.changes.map((ci) => X.rv.changes[ci]).sort((a, b) => /invert/i.test(b.why) - /invert/i.test(a.why) || 'hml'.indexOf(a.severity[0]) - 'hml'.indexOf(b.severity[0])) : [];
   const inv = cs[0] && /invert/i.test(cs[0].why);
   const tip = [label, n.old != null ? `was: ${n.old}` : '', n.text, ...cs.map((c) => `• ${c.why}`), n.kind === 'call' && n.callee ? `Click: x-ray of ${n.callee}` : '', n.rv === 'del' ? `removed · base line ${n.baseLine}` : `line ${n.line}`].filter(Boolean).join('\n');
   return `<button class="xn k-${esc(n.kind)}${n.error ? ' err' : ''}${n.rv ? ' rv-' + n.rv : ''}" data-id="${esc(n.id)}" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px${fx ? `;--k:${fx.color}` : ''}" title="${esc(tip)}">
