@@ -516,7 +516,7 @@ function gotoStation(i, fromVoice = false) {
 function narrateRide(r) {
   const texts = r.L.trunk.map((st, k) => (k ? `then ${spoken(st)}` : `${r.L.label}. Starts at ${spoken(st)}`));
   const ok = voice.on && speakFlow(texts, r.i, 1, (k) => { if (ride === r) gotoStation(k, true); },
-    (why) => { if (ride !== r) return; if (why === 'fallback') narrateRide(r); else r.voiceEnd = r.t; });
+    () => { if (ride === r) r.voiceEnd = r.t; });
   r.voiceEnd = ok || (voice.on && speak(texts[r.i], 1, () => { if (ride === r) r.voiceEnd = r.t; })) ? Infinity : null;
 }
 

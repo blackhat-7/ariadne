@@ -811,12 +811,12 @@ export function gotoStep(i, fromVoice = false) {
 
 // Narration. player.voiceEnd: null = timed step, Infinity = speaking, else player.t when speech ended.
 // The rest of the flow is read as one utterance that moves the steps itself (no pop between steps);
-// a manual jump restarts it from that step. Voices without progress events fall back to one per step.
+// a manual jump restarts it from that step. Voices without progress events are paced by time.
 function narrate(fromVoice = false) {
   if (fromVoice) return;   // the running flow utterance just reached this step
   if (voice.on && speakFlow(player.steps.map(stepSpeech), player.i, player.speed,
     (i) => { if (player.on) gotoStep(i, true); },
-    (why) => { if (!player.on) return; if (why === 'fallback') narrate(); else player.voiceEnd = player.t; })) {
+    () => { if (player.on) player.voiceEnd = player.t; })) {
     player.voiceEnd = Infinity;
     return;
   }

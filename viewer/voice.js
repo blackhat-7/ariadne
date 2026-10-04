@@ -27,12 +27,12 @@ export function speak(text, speed, onEnd) {
   return true;
 }
 
-// Read the rest of a flow as ONE utterance: macOS pops each time speech starts, so steps must not
-// be separate utterances. onReach(i) fires as the voice reaches step i (boundary events); onDone()
-// when it finishes, or onDone('fallback') if this voice reports no progress, after which callers
-// should speak step by step (voice.noBoundary stays set for the session).
+// Read the rest of a flow as ONE utterance: macOS pops each time speech starts, so steps must never be
+// separate utterances. onReach(i) fires as the voice reaches step i: from boundary events when the
+// voice sends them, else from elapsed speaking time (many system voices send none). onDone() at the end.
+const CHARS_PER_SEC = 15;   // typical speech pace at rate 1
 export function speakFlow(texts, from, speed, onReach, onDone) {
-  if (!voice.ok || voice.noBoundary || navigator.userActivation?.hasBeenActive === false) return false;
+  if (!voice.ok || navigator.userActivation?.hasBeenActive === false) return false;
   const prev = ended;
   cancelSpeech(); prev?.();
   const starts = [];
@@ -41,18 +41,22 @@ export function speakFlow(texts, from, speed, onReach, onDone) {
   const u = new SpeechSynthesisUtterance(text);
   u.voice = synth.getVoices().find((v) => v.voiceURI === voice.cfg.uri) || null;
   u.rate = clamp(voice.cfg.rate * speed, 0.1, 10);
-  let reached = 0, heard = false;
-  const probe = setTimeout(() => {
-    if (heard || current !== u) return;
-    voice.noBoundary = true; cancelSpeech(); onDone?.('fallback');
-  }, 2500);
-  u.onboundary = (e) => {
-    heard = true;
+  let reached = 0, heard = false, spoken = 0, last = performance.now();
+  const advance = (pos) => {
     let k = reached;
-    while (k + 1 < starts.length && starts[k + 1] <= e.charIndex) k++;
+    while (k + 1 < starts.length && starts[k + 1] <= pos) k++;
     if (k > reached) { reached = k; onReach(from + k); }
   };
-  u.onend = u.onerror = () => { clearTimeout(probe); if (current === u) { current = ended = null; onDone?.(); } };
+  const clock = setInterval(() => {
+    if (current !== u) return clearInterval(clock);
+    const now = performance.now(), dt = (now - last) / 1000;   // real time: ticks run late on a busy page
+    last = now;
+    if (heard || synth.paused) return;
+    spoken += dt;
+    if (spoken > 1) advance(spoken * CHARS_PER_SEC * u.rate);   // no progress events after 1s: estimate
+  }, 100);
+  u.onboundary = (e) => { heard = true; advance(e.charIndex); };
+  u.onend = u.onerror = () => { clearInterval(clock); if (current === u) { current = ended = null; onDone?.(); } };
   current = u; ended = null;
   if (synth.paused) synth.resume();
   synth.speak(u);
