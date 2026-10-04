@@ -50,11 +50,33 @@ export async function probeChat() {
   } catch { /* no chat server */ }
 }
 
+// A file reference as models write it: path/to/file.ext, optionally :line or :start-end.
+const EXT = '(?:go|py|pyi|js|jsx|mjs|cjs|ts|tsx|java|kt|kts|scala|rs|cs|fs|rb|php|c|h|cc|cpp|hpp|swift|ex|exs|dart|lua|sh|sql|proto|json|ya?ml|toml|md|html|css|scss|vue|svelte)';
+const FILE_REF = new RegExp(`^[\\w@.\\/-]*[\\w-]\\.${EXT}(?::\\d+(?:-\\d+)?)?$`, 'i');
+const BARE_REF = new RegExp(`(^|[\\s(])([\\w@.-]+\\/[\\w@.\\/-]*\\.${EXT}:\\d+(?:-\\d+)?)(?=[\\s).,;:]|$)`, 'gi');
+const linkRef = (c) => {
+  const ref = c.replace(/-\d+$/, '');   // a range opens at its first line
+  return state.M.code?.[c] || (state.codeApi && FILE_REF.test(c))
+    ? `<code class="ref" data-ref="${ref}">${c}</code>` : `<code>${c}</code>`;
+};
+
+// Models often cite just a file name ("scheduler.go:714"): find the repo path that ends with it.
+let repoFiles = null;
+async function fullRef(ref) {
+  const [, path, line] = /^(.*?)(:\d+)?$/.exec(ref);
+  if (path.includes('/') || !state.codeApi) return ref;
+  try { repoFiles ||= (await (await fetch('/api/tree?dir=')).json()).files; } catch { return ref; }
+  const hit = repoFiles.find((f) => f === path || f.endsWith('/' + path));
+  return hit ? hit + (line || '') : ref;
+}
+
 export function md(src) {
   const blocks = [];
   src = String(src || '').replace(/```[^\n]*\n([\s\S]*?)```/g, (_, c) => `\u0000${blocks.push(c) - 1}\u0000`);
   const inline = (t) => esc(t)
-    .replace(/`([^`]+)`/g, (_, c) => state.M.code?.[c] ? `<code class="ref" data-ref="${c}">${c}</code>` : `<code>${c}</code>`)
+    .replace(/`([^`]+)`/g, (_, c) => linkRef(c))
+    // bare references in prose too (not inside the code chips just made)
+    .replace(BARE_REF, (_, pre, c) => pre + linkRef(c))
     .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/(^|[\s(])\*([^*\s][^*]*)\*/g, '$1<i>$2</i>');
   let html = '', list = null;
   for (const line of src.split('\n')) {
@@ -119,7 +141,7 @@ export function initChat() {
   history = [];
   $('#chatpill').onclick = () => { $('#chat').classList.add('open'); $('#chatin').focus(); };
   $('#chatmin').onclick = () => $('#chat').classList.remove('open');
-  $('#chatlog').onclick = (e) => { const r = e.target.closest('[data-ref]'); if (r) openCode(r.dataset.ref); };
+  $('#chatlog').onclick = async (e) => { const r = e.target.closest('[data-ref]'); if (r) openCode(await fullRef(r.dataset.ref)); };
   $('#chatin').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#chatform').requestSubmit(); } e.stopPropagation(); });
   $('#chatform').onsubmit = async (e) => {
     e.preventDefault();
