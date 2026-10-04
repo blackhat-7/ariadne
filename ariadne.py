@@ -370,8 +370,7 @@ def build(args):
             owner.setdefault(max(match, key=len), []).append(f)
     sizes = {s: sum(count_lines(repo / f) for f in owner.get(s, [])) for s in slices}
     ids = slice_ids(slices)
-    # Big repos get more, smaller batches: wall time is set by the slowest batch.
-    args.batches = args.batches or min(16, max(4, -(-len(slices) // 5)))
+    args.batches = args.batches or min(16, len(slices))   # wall time is set by the slowest batch
     args.jobs = args.jobs or args.batches
     batches = batch(slices, sizes, args.batches)
     source = sum((repo / f).stat().st_size for fs in owner.values() for f in fs
@@ -978,7 +977,9 @@ def serve(args):
         sys.exit(f"No map for {repo} yet. Run: ariadne build {args.target}")
     index = HERE / "viewer" / "index.html"
     files = repo_files(repo)
-    AGENTS[:] = list_agents()
+    # Listing pi/opencode models takes seconds: do it after the server is up.
+    agents_ready = threading.Event()
+    threading.Thread(target=lambda: (AGENTS.extend(list_agents()), agents_ready.set()), daemon=True).start()
     structure = Structure(repo)
     data = json.loads(map_path.read_text())
     parts = {p["id"]: p for p in data.get("parts", [])}
@@ -998,6 +999,7 @@ def serve(args):
             path, arg = url.path, lambda k: parse_qs(url.query).get(k, [""])[0]
             # Read-only code browsing, confined to the repo.
             if path == "/api/agents":
+                agents_ready.wait(30)
                 return self.send(200, json.dumps({"agents": AGENTS}).encode(), "application/json")
             if path == "/api/structure":
                 if arg("part") not in parts:
@@ -1028,13 +1030,17 @@ def serve(args):
                 return self.send(404, b"not found", "text/plain")
             try:
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
+                agents_ready.wait(30)
                 result = chat(body, map_path, repo)
             except (ValueError, AttributeError) as e:
                 result = {"reply": f"Bad request: {e}", "actions": []}
             self.send(200, json.dumps(result).encode(), "application/json")
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"ariadne on http://{args.host}:{args.port}", file=sys.stderr)
+    url = f"http://{'127.0.0.1' if args.host == '0.0.0.0' else args.host}:{args.port}"
+    print(f"ariadne on {url}", file=sys.stderr)
+    if getattr(args, "open_browser", False):   # only now is the port listening
+        threading.Thread(target=webbrowser.open, args=(url,), daemon=True).start()
     server.serve_forever()
 
 
@@ -1075,8 +1081,7 @@ def main():
         if not Path(args.output).is_file():
             build(args)
         args.target, args.map, args.repo = str(repo), args.output, None
-        url = f"http://{'127.0.0.1' if args.host == '0.0.0.0' else args.host}:{args.port}"
-        threading.Timer(1.5, lambda: webbrowser.open(url)).start()
+        args.open_browser = True
         serve(args)
     else:
         {"build": build, "assemble": assemble, "serve": serve}[args.cmd](args)
