@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voxel Preview</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #f4d9b6; font: 600 12px system-ui, sans-serif; }
+  canvas { display: block; }
+  .lb { position: absolute; transform: translate(-50%, 0); color: #4a3a2c; background: rgba(255, 250, 240, 0.72); padding: 2px 7px; border-radius: 6px; white-space: nowrap; pointer-events: none; }
+  .lb i { font-style: normal; font-weight: 400; opacity: 0.7; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+// Showcase of every voxel model. ?view=models | islands | all (default).
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { island, partModel, externalModel, cart } from './voxels.js';
+
+const view = new URLSearchParams(location.search).get('view') || 'all';
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.95;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const sky = document.createElement('canvas'); sky.width = 2; sky.height = 256;
+const sg = sky.getContext('2d'), grad = sg.createLinearGradient(0, 0, 0, 256);
+grad.addColorStop(0, '#9fc3e6'); grad.addColorStop(0.55, '#f6dcc0'); grad.addColorStop(1, '#f2b98f');
+sg.fillStyle = grad; sg.fillRect(0, 0, 2, 256);
+scene.background = new THREE.CanvasTexture(sky); scene.background.colorSpace = THREE.SRGBColorSpace;
+
+scene.add(new THREE.HemisphereLight(0xfff1dc, 0x7a6a85, 0.75));
+const sun = new THREE.DirectionalLight(0xffe2bd, 2.3);
+sun.position.set(-60, 110, 70); sun.castShadow = true;
+sun.shadow.mapSize.set(4096, 4096); sun.shadow.radius = 4; sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.04;
+Object.assign(sun.shadow.camera, { left: -230, right: 230, top: 230, bottom: -230, near: 1, far: 600 });
+scene.add(sun);
+
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(800, 800), new THREE.MeshStandardMaterial({ color: 0xd9bb98, roughness: 1 }));
+ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+
+// Standard material plus a per-instance emissive strength that glows in the instance colour.
+const mat = new THREE.MeshStandardMaterial({ roughness: 0.82, metalness: 0 });
+mat.onBeforeCompile = (s) => {
+  s.vertexShader = 'attribute float aEm;\nvarying float vEm;\n' + s.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvEm = aEm;');
+  s.fragmentShader = 'varying float vEm;\n' + s.fragmentShader.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * vEm * 2.0;');
+};
+const box = new THREE.BoxGeometry(1, 1, 1);
+const labels = [];
+
+function add(model, x, y, z, name) {
+  const n = model.voxels.length, mesh = new THREE.InstancedMesh(box, mat, n), m = new THREE.Matrix4(), c = new THREE.Color(), em = new Float32Array(n);
+  model.voxels.forEach(([vx, vy, vz, r, g, b, e], i) => {
+    mesh.setMatrixAt(i, m.makeTranslation(x + vx, y + vy + 0.5, z + vz));
+    mesh.setColorAt(i, c.setRGB(r, g, b, THREE.SRGBColorSpace));
+    em[i] = e;
+  });
+  mesh.geometry = box.clone();
+  mesh.geometry.setAttribute('aEm', new THREE.InstancedBufferAttribute(em, 1));
+  mesh.castShadow = mesh.receiveShadow = true;
+  scene.add(mesh);
+  labels.push([new THREE.Vector3(x, y - 1, z + model.size[2] / 2 + 2), `${name} <i>${n}</i>`]);
+}
+
+const tints = ['#8fb3d9', '#c99bd6', '#8cc9a0', '#d8b46f', '#9aa6e0', '#e39a9a', '#7fc4c4', '#d9a37a', '#e0c070', '#a9a9b8', '#6fc3f0'];
+const models = [
+  ...['service', 'job', 'library', 'tool'].map((k, i) => [k, partModel(k, 11 + i, tints[i])]),
+  ...['db', 'queue', 'storage', 'cloud', 'saas', 'other'].map((k, i) => [k, externalModel(k, 21 + i, tints[4 + i])]),
+  ['cart', cart(tints[10])],
+];
+const camera = new THREE.PerspectiveCamera(30, innerWidth / innerHeight, 1, 2000);
+
+if (view !== 'islands') {
+  const z0 = view === 'all' ? 30 : 0;
+  models.forEach(([name, mdl], i) => { const row = i < 6 ? 0 : 1, col = row ? i - 6 : i; add(mdl, (col - (row ? 2 : 2.5)) * 22, 0, z0 + row * 34 - 17, name); });
+}
+if (view !== 'models') {
+  const z0 = view === 'all' ? -50 : 0;
+  [[10, '#8cc9a0', -62], [18, '#c99bd6', -10], [28, '#8fb3d9', 58]].forEach(([R, t, x], i) => add(island(101 + i, R, t), x, 6, z0, `island r${R}`));
+}
+if (view === 'models') { camera.position.set(0, 60, 128); camera.lookAt(0, 4, 2); }
+else if (view === 'islands') { camera.position.set(0, 70, 170); camera.lookAt(0, 18, 0); }
+else { camera.position.set(0, 95, 180); camera.lookAt(0, 4, -8); }
+
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.3, 0.35, 0.9));
+composer.addPass(new OutputPass());
+composer.render();
+
+for (const [p, html] of labels) {
+  const v = p.clone().project(camera), el = document.createElement('div');
+  el.className = 'lb'; el.innerHTML = html;
+  el.style.left = (v.x + 1) / 2 * innerWidth + 'px'; el.style.top = (1 - v.y) / 2 * innerHeight + 'px';
+  document.body.appendChild(el);
+}
+</script>
+</body>
+</html>
