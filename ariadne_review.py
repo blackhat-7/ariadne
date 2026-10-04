@@ -12,12 +12,13 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from ariadne import EXTERNAL_KINDS, GENERATED, TESTS
+from ariadne import EXTERNAL_KINDS, GENERATED, TESTS, guess_kind
 from ariadne_gates import gates as find_gates
 from ariadne_xray import LANGS, Walk, body_of, clip, function_name, functions as find_functions, \
     get_parser, words
 
-RANK = {"none": 0, "low": 1, "medium": 2, "high": 3}
+RISKS = ["none", "low", "medium", "high"]
+RANK = {r: i for i, r in enumerate(RISKS)}
 WRITE_KINDS = {"db", "queue", "storage", "payment"}
 PAYMENT = re.compile(r"stripe|paddle|payment|billing|braintree|adyen|checkout\.com")
 NETWORK = {"http", "https", "requests", "httpx", "aiohttp", "axios", "fetch", "urlopen", "client", "stub", "grpc",
@@ -157,42 +158,28 @@ def show(repo, rev, path):
         return None
 
 
-def old_path(repo, base_sha, head_sha, path):
-    for status, p, old, *_ in changed(repo, base_sha, head_sha):
-        if p == path:
-            return old if status == "renamed" else path
-    return path
-
-
-def base_source(repo, base, path, head=None) -> str | None:
-    """Text of path at the review's base (following a rename), or None when it did not exist there."""
-    base_sha, _, head_sha = revs(repo, base, head)
-    data = show(repo, base_sha, old_path(repo, base_sha, head_sha, path))
+def file_text(repo, rev, path) -> str | None:
+    """Text of path at rev (None: the working tree), or None when it is not there."""
+    if rev is None:
+        data = read_file(Path(repo) / path)
+    else:
+        data = show(repo, rev, path)
     return None if data is None else data.decode("utf-8", "replace")
 
 
-def head_source(repo, head, path) -> str | None:
-    """Text of path at head (None: the working tree), or None when it does not exist there."""
-    if head is None:
-        try:
-            return (Path(repo) / path).read_bytes().decode("utf-8", "replace")
-        except OSError:
-            return None
-    data = show(repo, rev_parse(repo, head), path)
-    return None if data is None else data.decode("utf-8", "replace")
-
-
-def diff_file(repo, base, path, head=None) -> dict:
-    """GET /api/diff: both versions of a file and the hunks between them."""
-    base_sha, _, head_sha = revs(repo, base, head)
-    old = old_path(repo, base_sha, head_sha, path)
-    b, h = show(repo, base_sha, old), head_source(repo, head_sha, path)
-    b = None if b is None else b.decode("utf-8", "replace").splitlines()
+def diff_file(repo, base_sha, head_sha, path, old) -> dict:
+    """GET /api/diff: both versions of a file (old: its path at base) and their line alignment, 1-based:
+    ["=", b, h] | ["-", b, 0] | ["+", 0, h], removals before additions."""
+    b, h = file_text(repo, base_sha, old), file_text(repo, head_sha, path)
+    b = None if b is None else b.splitlines()
     h = None if h is None else h.splitlines()
-    ops = difflib.SequenceMatcher(None, b or [], h or [], autojunk=False).get_opcodes()
-    return {"path": path, "old": old if old != path else None, "base": b, "head": h,
-            "hunks": [{"base_start": i1 + 1, "base_len": i2 - i1, "head_start": j1 + 1, "head_len": j2 - j1}
-                      for op, i1, i2, j1, j2 in ops if op != "equal"]}
+    ops = []
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, b or [], h or [], autojunk=False).get_opcodes():
+        if op == "equal":
+            ops += [["=", i + 1, j + 1] for i, j in zip(range(i1, i2), range(j1, j2))]
+        else:
+            ops += [["-", i + 1, 0] for i in range(i1, i2)] + [["+", 0, j + 1] for j in range(j1, j2)]
+    return {"path": path, "old": old if old != path else None, "base": b, "head": h, "ops": ops}
 
 
 # ---------------------------------------------------------------- branches and PRs
@@ -224,6 +211,20 @@ def branches(repo) -> dict:
     return out
 
 
+def gh(repo, *args):
+    """Parsed JSON output of a gh command; RuntimeError when gh is missing, fails or times out."""
+    if shutil.which("gh") is None:
+        raise RuntimeError("gh is not installed")
+    try:
+        r = subprocess.run(["gh", *args], cwd=repo, capture_output=True, text=True, timeout=20,
+                           stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"gh {' '.join(args[:2])} timed out")
+    if r.returncode != 0:
+        raise RuntimeError((r.stderr.strip().splitlines() or [f"gh {' '.join(args[:2])} failed"])[-1])
+    return json.loads(r.stdout or "null")
+
+
 def pull_requests(repo):
     try:
         url = git(repo, "config", "--get", "remote.origin.url").decode()
@@ -231,17 +232,19 @@ def pull_requests(repo):
         url = ""
     if "github.com" not in url:
         return {"prs": None, "prs_error": "no GitHub remote"}
-    if shutil.which("gh") is None:
-        return {"prs": None, "prs_error": "gh is not installed"}
     try:
-        r = subprocess.run(["gh", "pr", "list", "--limit", "50", "--json",
-                            "number,title,headRefName,author,updatedAt,isDraft"],
-                           cwd=repo, capture_output=True, text=True, timeout=20, stdin=subprocess.DEVNULL)
-    except subprocess.TimeoutExpired:
-        return {"prs": None, "prs_error": "gh pr list timed out"}
-    if r.returncode != 0:
-        return {"prs": None, "prs_error": (r.stderr.strip().splitlines() or ["gh pr list failed"])[-1]}
-    return {"prs": json.loads(r.stdout or "[]")}
+        return {"prs": gh(repo, "pr", "list", "--limit", "50", "--json",
+                          "number,title,headRefName,author,updatedAt,isDraft") or []}
+    except RuntimeError as e:
+        return {"prs": None, "prs_error": str(e)}
+
+
+def pr_info(repo, n):
+    """Title, description and URL of pull request n; only its number when gh can't tell."""
+    try:
+        return gh(repo, "pr", "view", str(int(n)), "--json", "number,title,body,url")
+    except RuntimeError:
+        return {"number": int(n), "title": "", "body": "", "url": ""}
 
 
 def pr_head(repo, n) -> str:
@@ -286,7 +289,7 @@ def review(repo, base=None, head=None, *, part_of, known_functions, effect_targe
     blobs = read_blobs(repo, missing)
     if len(_cache) > MAX_CACHE:
         _cache.clear()
-    fns, gate_parts = [], []
+    fns, gate_parts, local = [], [], {}
     for key, path, b, h, known, targets in jobs:
         if key not in _cache:
             _cache[key] = analyse(path, blobs.get(b) if b else None,
@@ -294,21 +297,22 @@ def review(repo, base=None, head=None, *, part_of, known_functions, effect_targe
         result = _cache[key]
         fns += [dict(f, changes=[dict(c) for c in f["changes"]]) for f in result["functions"]]
         gate_parts += result["gates"]
+        local[path] = result["names"]
 
     for f in fns:
         f["part"] = part_of(f["file"])
-        found = list(callers(f["file"], f["name"]) or [])
+        found = callers(f["file"], f["name"])
         lines = [dict(e, part=f["part"]) for name in [f["name"], *found] if f["part"] is not None
-                 for e in metro_entries(f["part"], name) or []]
+                 for e in metro_entries(f["part"], name)]
         f["blast"] = {"entries": list({(e["part"], e["line"]): e for e in lines}.values()), "callers": found}
-        outside = set(found) - set(f.pop("_local_names"))
+        outside = set(found) - local[f["file"]]
         for c in f["changes"]:
             if c["kind"] == "signature" and outside:
                 c["severity"], c["why"] = "high", "Signature changed, called from other files"
         top = max((RANK[c["severity"]] for c in f["changes"]), default=0)
         if f["status"] != "modified":
             top = max(top, 1)
-        f["risk"] = [k for k, v in RANK.items() if v == top][0]
+        f["risk"] = RISKS[top]
 
     parts = {}
     for f in fns:
@@ -323,7 +327,7 @@ def review(repo, base=None, head=None, *, part_of, known_functions, effect_targe
     return {
         "status": "ready",
         "base": {"rev": base_sha, "short": base_sha[:7], "ref": ref},
-        "head": {"rev": head_rev, "short": head_rev[:7], "ref": head,
+        "head": {"rev": head_rev, "short": head_rev[:7],
                  "dirty": head_sha is None and bool(git(repo, "status", "--porcelain").strip())},
         "files": files,
         "functions": fns,
@@ -396,7 +400,7 @@ def analyse(rel, base_src, head_src, known, targets):
         f = b or h
         ident = f"{f['parent']}.{f['name']}" if f["name"] in shared and f["parent"] else f["name"]
         fn = {"id": f"{rel}::{ident}", "name": f["name"], "parent": f["parent"], "file": rel, "status": status,
-              "base": span(b), "head": span(h), "changes": [], "_local_names": sorted({x["name"] for x in head.fns})}
+              "base": span(b), "head": span(h), "changes": []}
         if status == "modified":
             bx = Walk(lang, b["node"], set(known), base_targets).run(rel)
             hx = Walk(lang, h["node"], set(known), targets).run(rel)
@@ -416,7 +420,7 @@ def analyse(rel, base_src, head_src, known, targets):
     gates = gate_changes(rel, base, head, out)
     for fn in out:
         fn["changes"].sort(key=lambda c: (c["head_line"] or c["base_line"] or 0))
-    return {"functions": out, "gates": gates}
+    return {"functions": out, "gates": gates, "names": {f["name"] for f in head.fns}}
 
 
 class Version:
@@ -698,10 +702,8 @@ def effect_kind(n):
     if PAYMENT.search(s):
         return "payment"
     if n.get("target"):
-        for kind, names in EXTERNAL_KINDS.items():
-            if any(w in s for w in names):
-                return kind
-        return "outside"
+        kind = guess_kind(s)
+        return "outside" if kind == "other" else kind
     w = words(s) | set(re.findall(r"\w+", s))
     for kind, names in EXTERNAL_KINDS.items():
         if w & set(names):
@@ -734,7 +736,7 @@ def literal_changes(b, h):
             severity = "medium" if name or in_cond else "low"
             label = name or ("Condition value" if in_cond else "Value")
             out.append(change("literal", "changed", before, after, bn.start_point[0] + 1, hn.start_point[0] + 1,
-                              severity, f"{label} changed: {clip(before)} → {clip(after)}") | {"statement": stmt})
+                              severity, f"{label} changed: {clip(before)} → {clip(after)}"))
     return out
 
 

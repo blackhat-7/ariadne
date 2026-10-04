@@ -1,16 +1,17 @@
 // drawer.js
-// Exports: refLine, codeHtml, drawer, dcode, dtree, gpop, treeCache, fileCache, hist, getJSON, probeCodeApi, LANGS, langOf, highlightLines, partOfPath, openFile, renderTree, DEF_RE, indentOf, enclosingFn, lastSeg, codeMatches, overlay, BEACON_AMBER, ringGeo, beaconMat, rippleMat, beacon, beaconRing, ripple, updateBeacon, stepNode, linkCode, applyCodeLink, showCodeLink, clearCodeLink, renderCtx, navHist, closeDrawer, closePop, openFinder, runFinder, renderFinder, closeFinder, initCodeBrowser, initCodeLink
-// Imports: state: state | board: structNodeAt | hud: fuzzy, openCode | main: act | scene: camPos, camera, controls, exts, flyTo, nodeByKey, parts, playFlow, player, recolor, resolveEnt, select, setEmphasis | theme: KINDS, THEME, kindOf | util: $, V3, clamp, ease, esc
+// Exports: refLine, codeHtml, drawer, dcode, dtree, gpop, treeCache, fileCache, getJSON, postJSON, probeCodeApi, LANGS, langOf, highlightLines, partOfPath, openFile, renderTree, DEF_RE, indentOf, enclosingFn, lastSeg, codeMatches, overlay, BEACON_AMBER, ringGeo, beaconMat, rippleMat, beacon, beaconRing, ripple, updateBeacon, stepNode, linkCode, applyCodeLink, showCodeLink, clearCodeLink, renderCtx, reloadFile, closeDrawer, closePop, openFinder, runFinder, renderFinder, closeFinder, initCodeBrowser, initCodeLink
+// Imports: state: state | board: structNodeAt | hud: fuzzy, openCode | main: act | nav: remember | scene: camPos, camera, controls, exts, flyTo, nodeByKey, parts, playFlow, player, recolor, resolveEnt, select, setEmphasis | theme: KINDS, THEME, kindOf | util: $, V3, clamp, ease, esc
 import * as THREE from 'three';
 import { state } from './state.js';
 import { structNodeAt } from './board.js';
 import { fuzzy, openCode } from './hud.js';
 import { act } from './main.js';
+import { remember } from './nav.js';
 import { camPos, camera, controls, exts, flyTo, nodeByKey, parts, playFlow, player, recolor, resolveEnt, select, setEmphasis } from './scene.js';
 import { KINDS, THEME, kindOf } from './theme.js';
 import { $, V3, clamp, ease, esc } from './util.js';
 
-export let drawer, dcode, dtree, gpop, treeCache, fileCache, hist, LANGS, partOfPath, DEF_RE, indentOf, lastSeg, overlay, BEACON_AMBER, ringGeo, beaconMat, rippleMat, beacon, beaconRing, ripple;
+export let drawer, dcode, dtree, gpop, treeCache, fileCache, LANGS, partOfPath, DEF_RE, indentOf, lastSeg, overlay, BEACON_AMBER, ringGeo, beaconMat, rippleMat, beacon, beaconRing, ripple;
 
 /* ---------------- code rendering ---------------- */
 export function refLine(ref) { const m = /:(\d+)$/.exec(ref || ''); return m ? +m[1] : 0; }
@@ -25,6 +26,14 @@ export function codeHtml(ref, around) {
 }
 
 export async function getJSON(url) { const r = await fetch(url); if (!r.ok) throw new Error(`${r.status} ${url}`); return r.json(); }
+
+// POST a JSON body: the JSON answer, or an Error carrying the server's message.
+export async function postJSON(url, body, opts = {}) {
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), ...opts });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j.error) throw new Error(j.error || `The server answered ${r.status}.`);
+  return j;
+}
 
 export async function probeCodeApi() {
   if (!location.protocol.startsWith('http')) return;
@@ -55,10 +64,11 @@ export function highlightLines(lines, path) {
   return out;
 }
 
-export async function openFile(path, line, fromHist) {
+// quiet: not a jump to come back from (back/forward itself, or the same file shown another way).
+export async function openFile(path, line, quiet) {
+  if (!quiet) remember();
   drawer.classList.add('open'); closePop();
-  if (!fromHist) { hist.splice(state.hIdx + 1); hist.push({ path, line }); state.hIdx = hist.length - 1; }
-  $('#dback').disabled = state.hIdx <= 0; $('#dfwd').disabled = state.hIdx >= hist.length - 1;
+  state.curLine = line;
   const dirs = path.split('/'), name = dirs.pop();
   const chev = '<span class="sym i-chev"></span>';
   $('#dpath').innerHTML = `<bdi>${dirs.map((d) => `<span>${esc(d)}</span>${chev}`).join('')}<b><span class="sym i-code"></span>${esc(name)}</b>${line ? `<span class="ln">:${line}</span>` : ''}</bdi>`;
@@ -258,7 +268,12 @@ export function renderCtx() {
   el.innerHTML = h + hint;
 }
 
-export function navHist(step) { const i = state.hIdx + step; if (i < 0 || i >= hist.length) return; state.hIdx = i; openFile(hist[i].path, hist[i].line, true); }
+// Show the open file again (another view of it, e.g. Diff or Code), at the line the cursor is on.
+export function reloadFile() {
+  if (!state.curFile || !drawer.classList.contains('open')) return;
+  const f = state.curFile, line = +dcode.querySelector('.cl.on')?.dataset.n || state.curLine;
+  state.curFile = null; openFile(f, line, true);
+}
 
 export function closeDrawer() { drawer.classList.remove('open'); closePop(); clearCodeLink(); }
 
@@ -295,8 +310,6 @@ export function initCodeBrowser() {
   gpop = $('#gpop');
   treeCache = new Map();
   fileCache = new Map();
-  hist = [];
-  state.hIdx = -1;
   state.curFile = null;
   LANGS = { go: 'go', ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript', py: 'python', rs: 'rust', java: 'java', kt: 'kotlin', rb: 'ruby', sh: 'bash', bash: 'bash', yml: 'yaml', yaml: 'yaml', json: 'json', sql: 'sql', md: 'markdown', proto: 'protobuf', toml: 'ini', ini: 'ini', css: 'css', html: 'xml', xml: 'xml', swift: 'swift', c: 'c', h: 'c', cpp: 'cpp', cs: 'csharp', php: 'php', tf: 'plaintext' };
   if (matchMedia('(max-width:900px)').matches) drawer.classList.add('notree');   // phone: code first, tree on demand
@@ -344,8 +357,8 @@ export function initCodeLink() {
     openFile(f.dataset.file, 0);
     if (matchMedia('(max-width:900px)').matches) drawer.classList.add('notree');   // phone: tree is an overlay, get it out of the way
   });
-  $('#dback').onclick = () => navHist(-1);
-  $('#dfwd').onclick = () => navHist(1);
+  $('#dback').onclick = () => history.back();
+  $('#dfwd').onclick = () => history.forward();
   $('#dx').onclick = closeDrawer;
   $('#dfind').onclick = () => openFinder();
   $('#dtreebtn').onclick = () => drawer.classList.toggle('notree');

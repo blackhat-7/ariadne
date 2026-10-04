@@ -312,15 +312,15 @@ def choose_model(args, summary):
 
 
 def file_hashes(repo):
-    """path -> content hash for every tracked or untracked file: git's index hashes, recomputed for files
-    changed in the working tree. Cheap enough to run on every build or branch switch."""
+    """path -> content hash of every tracked file: git's index hashes, recomputed for files changed in the
+    working tree. Cheap enough to run on every build or branch switch."""
     out = git(repo, "ls-files", "-s", "-z")
     hashes = {}
     for entry in (out or "").split("\0"):
         if "\t" in entry:
             meta, path = entry.split("\t", 1)
             hashes[path] = meta.split()[1]
-    changed = git(repo, "ls-files", "-m", "-o", "--exclude-standard", "-z") if out is not None else None
+    changed = git(repo, "ls-files", "-m", "-z") if out is not None else None
     for path in (changed.split("\0") if changed is not None else repo_files(repo)):
         f = repo / path
         if path and f.is_file():
@@ -1158,7 +1158,7 @@ class Below:
     def __init__(self, repo, files, parts, kinds, structure):
         self.repo, self.parts, self.kinds, self.structure = repo, parts, kinds, structure
         self.files = [f for f in files if SOURCE.search(f) and not GENERATED.search(f) and not TESTS.search(f)]
-        self.lock, self.all_gates, self.metro = threading.Lock(), None, {}
+        self.lock, self.all_gates, self.metro, self.known_names = threading.Lock(), None, {}, {}
 
     def module(self, name):
         try:
@@ -1184,8 +1184,12 @@ class Below:
     def known(self, rel):
         """Our own calls are into the same part or a shared library; other parts are reached over the network."""
         own = self.part_of(rel)
-        folders = [p["path"] for p in self.parts.values() if p.get("path") and (p["id"] == own or p.get("kind") == "library")]
-        return self.structure.names(folders or [""])
+        if own not in self.known_names:   # a scan of the whole call graph: once per part
+            folders = [p["path"] for p in self.parts.values() if p.get("path") and (p["id"] == own or p.get("kind") == "library")]
+            if self.structure.db is None:   # still building: don't keep the empty answer
+                return set()
+            self.known_names[own] = self.structure.names(folders or [""])
+        return self.known_names[own]
 
     def xray(self, rel, line, text=None):
         """x-ray of the function at rel:line; text = another version of the file (a branch or the PR base)."""
@@ -1294,7 +1298,7 @@ class Reviews:
         b = self.view.below
         r = self.engine().review(self.root, self.base, self.rev, part_of=b.part_of, known_functions=b.known,
                                  effect_targets=b.targets, callers=b.structure.callers, metro_entries=b.entries)
-        return dict(r, pr=self.pr, head=dict(r["head"], ref=self.head))
+        return dict(r, pr=self.pr)
 
     def select(self, head=None, base=None, pr=None):
         """head: None (the checkout with uncommitted changes), a branch or revision, or "pr:N"."""
@@ -1306,7 +1310,7 @@ class Reviews:
             rev = engine.rev_parse(self.root, head) if head else None
         with self.lock:
             self.head, self.base, self.rev = head or None, base or None, rev
-            self.pr = pr_info(self.root, pr) if pr else None
+            self.pr = engine.pr_info(self.root, pr) if pr else None
             self.result = self.compute()
         tree, out, _ = self.target(rev)
         if out.exists() and self.view.map_path != out and not self.running():
@@ -1324,8 +1328,7 @@ class Reviews:
         """How far the shown map is from the selected head, and what refreshing it would cost."""
         tree, out, rev = self.target(self.rev)
         pl = plan(self.root, rev)
-        changed, tokens = len(pl["todo"]), pl["tokens"]
-        model = bool(changed) or pl["needs_model"]
+        changed, tokens, model = len(pl["todo"]), pl["tokens"], pl["needs_model"]
         return {"shown": self.view.map_path == out, "built": out.exists() and not changed,
                 "parts_total": len(pl["slices"]), "parts_changed": changed, "needs_model": model,
                 "est_tokens": [tokens * 3 // 10, tokens] if changed else [0, 0],
@@ -1386,11 +1389,21 @@ class Reviews:
             self.branch_list = (time.time(), found)
         return dict(found, selected={"head": self.head, "base": self.base})
 
+    def old_path(self, rel):
+        """rel's path at the review's base (a renamed file had another one)."""
+        if not self.result:
+            raise RuntimeError("no review selected")
+        return next((f["old"] for f in self.result["files"] if f["path"] == rel and f["old"]), rel)
+
     def source(self, rel, side):
-        engine = self.engine()
+        """Text of rel in the reviewed base or head (None when it is not there)."""
         if side == "base":
-            return engine.base_source(self.root, self.base, rel, self.rev)
-        return engine.head_source(self.root, self.rev, rel)
+            return self.engine().file_text(self.root, self.result and self.result["base"]["rev"], self.old_path(rel))
+        return self.engine().file_text(self.root, self.rev, rel)
+
+    def diff(self, rel):
+        return self.engine().diff_file(self.root, self.result and self.result["base"]["rev"], self.rev, rel,
+                                       self.old_path(rel))
 
     def narrative(self, agent, model):
         r = self.result
@@ -1405,7 +1418,7 @@ class Reviews:
         facts += [f"gate {g['id']} {g['op']}" for g in r["gates"]]
         paths = [x["path"] for x in r["files"] if not x["generated"] and not x["test"]][:30]
         span = [r["base"]["rev"]] + ([self.rev] if self.rev else [])
-        hunks = self.engine().git(self.root, "diff", "-U3", *span, "--", *paths).decode("utf-8", "replace") if paths else ""
+        hunks = (git(self.root, "diff", "-U3", *span, "--", *paths) or "") if paths else ""
         pr = r.get("pr") or {}
         prompt = (NARRATIVE_PROMPT + "\n# PR description\n" + (f"{pr.get('title', '')}\n{pr.get('body') or ''}" if pr else "(none)")
                   + "\n\n# Facts\n" + "\n".join(facts) + "\n\n# Hunks\n" + hunks[:60000])
@@ -1431,20 +1444,6 @@ class Reviews:
         cache.parent.mkdir(parents=True, exist_ok=True)
         cache.write_text(json.dumps(result))
         return result
-
-
-def pr_info(repo, n):
-    """Title, description and URL of pull request n, from gh (None without gh or a GitHub remote)."""
-    if shutil.which("gh") is None:
-        return {"number": int(n), "title": "", "body": "", "url": ""}
-    try:
-        r = subprocess.run(["gh", "pr", "view", str(int(n)), "--json", "number,title,body,url"], cwd=repo,
-                           capture_output=True, text=True, timeout=20, stdin=subprocess.DEVNULL)
-    except subprocess.TimeoutExpired:
-        r = None
-    if r is None or r.returncode != 0:
-        return {"number": int(n), "title": "", "body": "", "url": ""}
-    return json.loads(r.stdout)
 
 
 def checkout(root, tree, rev):
@@ -1536,7 +1535,7 @@ def serve(args):
                     elif path == "/api/branches":
                         result = reviews.branches(fresh=arg("fresh") == "1")
                     elif path == "/api/diff":
-                        result = reviews.engine().diff_file(repo, reviews.base, arg("file"), reviews.rev)
+                        result = reviews.diff(arg("file"))
                     elif path == "/api/map/status":
                         result = reviews.status()
                     else:

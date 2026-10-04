@@ -1,17 +1,18 @@
 // review.js
 // Exports: reviewFn, xrayRev, diffOps, mergeXray, openChangeLine, initReview
-// Imports: state: state | board: flyToBoard, openLens, setFacing, setGateLines | drawer: dcode, drawer, getJSON, highlightLines, openFile | hud: I, openCode | scene: camPos, controls, fly, flyToEnt, markReview, parts, player, recolor, setEmphasis | util: $, clamp, esc | voice: cancelSpeech, speakFlow, voice | xray: focusChange
+// Imports: state: state | board: flyToBoard, openLens, setFacing, setGateLines, spoken | chat: openSettings | drawer: dcode, drawer, getJSON, highlightLines, openFile, postJSON, reloadFile | hud: I, openCode | scene: camPos, controls, fly, flyToEnt, markReview, parts, player, recolor, setEmphasis | util: $, clamp, esc | voice: cancelSpeech, speakFlow, voice | xray: blocksOf, focusChange, headOf, itemIds
 // PR review mode (REVIEW.md): the Review panel (PR, stats, narrative, the change list with filters, keys and reviewed
 // state), risk on the map, the merged head/base x-ray data, the code drawer's Diff view, the review tour, the branch/PR
 // picker and the stale-map banner. Everything shown comes from the server's deterministic review JSON.
 import { state } from './state.js';
-import { flyToBoard, openLens, setFacing, setGateLines } from './board.js';
-import { dcode, drawer, getJSON, highlightLines, openFile } from './drawer.js';
+import { flyToBoard, openLens, setFacing, setGateLines, spoken } from './board.js';
+import { dcode, drawer, getJSON, highlightLines, openFile, postJSON, reloadFile } from './drawer.js';
+import { openSettings } from './chat.js';
 import { I, openCode } from './hud.js';
 import { camPos, controls, fly, flyToEnt, markReview, parts, player, recolor, setEmphasis } from './scene.js';
 import { $, clamp, esc } from './util.js';
 import { cancelSpeech, speakFlow, voice } from './voice.js';
-import { focusChange } from './xray.js';
+import { blocksOf, focusChange, headOf, itemIds } from './xray.js';
 
 const RANK = { high: 3, medium: 2, low: 1, none: 0 };
 const RISK_COLOR = { high: '#ff6b5e', medium: '#f2b04d', low: '#8fd3f0' };
@@ -42,47 +43,10 @@ export function reviewFn(file, line) {
 export const xrayRev = (side) => (!R.data || !R.on ? '' : side === 'base' ? '&rev=base' : R.map?.shown === false ? '&rev=head' : '');
 
 function loadDiff(file) {
-  const k = file;
-  if (!R.diffs.has(k)) R.diffs.set(k, getJSON(`/api/diff?file=${encodeURIComponent(file)}`).then((d) => ({ ...d, ops: align(d) }), (e) => { R.diffs.delete(k); throw e; }));
-  return R.diffs.get(k);
+  if (!R.diffs.has(file)) R.diffs.set(file, getJSON(`/api/diff?file=${encodeURIComponent(file)}`).catch((e) => { R.diffs.delete(file); throw e; }));
+  return R.diffs.get(file);
 }
 export const diffOps = (file) => loadDiff(file).then((d) => d.ops);
-
-// Line alignment of base and head: ['=', b, h] | ['-', b, 0] | ['+', 0, h], 1-based. Outside hunks lines pair up in
-// order; each hunk, widened by a line on both ends, goes through an LCS that pairs identical lines. So hunks with or
-// without context, and either convention for where an empty side starts, all align the same.
-function align(d) {
-  const B = d.base || [], H = d.head || [], ops = [];
-  if (!d.base) return H.map((_, i) => ['+', 0, i + 1]);
-  if (!d.head) return B.map((_, i) => ['-', i + 1, 0]);
-  let b = 1, h = 1;
-  for (const k of [...(d.hunks || [])].sort((x, y) => x.base_start - y.base_start)) {
-    while (b < k.base_start - 1 && h < k.head_start - 1) ops.push(['=', b++, h++]);
-    const b1 = Math.min(B.length + 1, Math.max(b, k.base_start + k.base_len + 1)), h1 = Math.min(H.length + 1, Math.max(h, k.head_start + k.head_len + 1));
-    ops.push(...lcs(B, H, b, b1, h, h1));
-    b = b1; h = h1;
-  }
-  while (b <= B.length && h <= H.length) ops.push(['=', b++, h++]);
-  while (b <= B.length) ops.push(['-', b++, 0]);
-  while (h <= H.length) ops.push(['+', 0, h++]);
-  return ops;
-}
-
-// Lines [b0, b1) of B against [h0, h1) of H; removals come before additions between matches.
-function lcs(B, H, b0, b1, h0, h1) {
-  const n = b1 - b0, m = h1 - h0, out = [];
-  const flush = (bs, be, hs, he) => { for (let i = bs; i < be; i++) out.push(['-', i, 0]); for (let j = hs; j < he; j++) out.push(['+', 0, j]); };
-  if (n <= 0 || m <= 0 || n * m > 4e6) { flush(b0, b1, h0, h1); return out; }
-  const T = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
-  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) T[i][j] = B[b0 + i - 1] === H[h0 + j - 1] ? T[i + 1][j + 1] + 1 : Math.max(T[i + 1][j], T[i][j + 1]);
-  let i = 0, j = 0, pi = 0, pj = 0;
-  while (i < n && j < m) {
-    if (B[b0 + i - 1] === H[h0 + j - 1]) { flush(b0 + pi, b0 + i, h0 + pj, h0 + j); out.push(['=', b0 + i, h0 + j]); pi = ++i; pj = ++j; }
-    else if (T[i + 1][j] >= T[i][j + 1]) i++; else j++;
-  }
-  flush(b0 + pi, b1, h0 + pj, h1);
-  return out;
-}
 
 /* ---------------- merged x-ray: head plus base ghosts ----------------
    Every node gets rv: 'add' | 'del' | 'chg' | undefined. A base node pairs with a head node of the same kind when its line
@@ -133,7 +97,7 @@ export function mergeXray(head, base, fn, ops) {
   const lineOf = (id) => byId[id]?.at ?? byId[id]?.line ?? 0;
   const ghostOf = (item) => {
     if (typeof item === 'string') return ghosts.has(item) ? 'b:' + item : null;
-    const hd = item.if ?? item.loop ?? item.switch ?? item.try;
+    const hd = headOf(item);
     if (hd != null && !ghosts.has(hd)) return null;
     const blk = (b) => (b ? { seq: (b.seq || []).map(ghostOf).filter(Boolean) } : b);
     if ('if' in item) return { if: 'b:' + hd, then: blk(item.then), else: blk(item.else) };
@@ -145,8 +109,8 @@ export function mergeXray(head, base, fn, ops) {
   const walk = (block) => {
     for (const item of block?.seq || []) {
       const g = ghostOf(item);
-      if (g) place(tree, g, lineOf(typeof g === 'string' ? g : g.if ?? g.loop ?? g.switch ?? g.try), lineOf);
-      else if (typeof item !== 'string') kids(item).forEach(walk);
+      if (g) place(tree, g, lineOf(headOf(g)), lineOf);
+      else if (typeof item !== 'string') blocksOf(item).forEach(walk);
     }
   };
   if (base) walk(base.tree);
@@ -154,23 +118,16 @@ export function mergeXray(head, base, fn, ops) {
   return { ...head, nodes, tree };
 }
 
-const kids = (o) => ('if' in o ? [o.then, o.else] : 'loop' in o ? [o.body] : 'switch' in o ? o.cases.map((c) => c.body) : 'try' in o ? [o.body, o.catch, o.finally] : []).filter(Boolean);
-function idsOf(x, out = []) {
-  if (typeof x === 'string') out.push(x);
-  else if (x) { const h = x.if ?? x.loop ?? x.switch ?? x.try; if (h) out.push(h); for (const k of kids(x)) for (const y of k.seq || []) idsOf(y, out); }
-  return out;
-}
-
 // Put a ghost item into the innermost head block whose lines surround pos, before the first item that starts after it.
 function place(block, item, pos, lineOf) {
   for (const x of block.seq) {
     if (typeof x === 'string') continue;
-    const ls = idsOf(x).map(lineOf).filter(Boolean);
+    const ls = itemIds(x).map(lineOf).filter(Boolean);
     if (!(pos > Math.min(...ls) && pos < Math.max(...ls))) continue;
-    const inner = kids(x).find((k) => { const l = (k.seq || []).flatMap((y) => idsOf(y)).map(lineOf).filter(Boolean); return l.length && pos >= Math.min(...l) - 0.5 && pos <= Math.max(...l) + 0.5; });
+    const inner = blocksOf(x).find((k) => { const l = (k.seq || []).flatMap((y) => itemIds(y)).map(lineOf).filter(Boolean); return l.length && pos >= Math.min(...l) - 0.5 && pos <= Math.max(...l) + 0.5; });
     if (inner) return place(inner, item, pos, lineOf);
   }
-  const i = block.seq.findIndex((x) => lineOf(typeof x === 'string' ? x : x.if ?? x.loop ?? x.switch ?? x.try) > pos);
+  const i = block.seq.findIndex((x) => lineOf(headOf(x)) > pos);
   block.seq.splice(i < 0 ? block.seq.length : i, 0, item);
 }
 
@@ -238,15 +195,12 @@ export async function openChangeLine(file, headLine, baseLine) {
 // The server's current review; with none selected yet, the checkout (with its uncommitted changes) is reviewed.
 async function loadReview() {
   R.busy = 'load'; R.error = ''; render();
-  for (let tries = 0; tries < 400; tries++) {
-    let j;
-    try { j = await getJSON('/api/review'); } catch (e) { R.busy = null; R.error = /^404/.test(e.message) ? 'This server has no review mode.' : 'The server did not answer.'; return render(); }
-    if (j.status === 'none') { R.busy = null; return selectHead(''); }
-    if (j.status === 'building') { R.building = true; render(); await new Promise((r) => setTimeout(r, 1500)); continue; }
-    R.building = false; R.busy = null;
-    if (j.status !== 'ready') { R.error = j.error || 'The review could not be built.'; return render(); }
-    return setReview(j, '');
-  }
+  let j;
+  try { j = await getJSON('/api/review'); } catch { R.busy = null; R.error = 'The server did not answer.'; return render(); }
+  R.busy = null;
+  if (j.status === 'none') return selectHead('');
+  if (j.status !== 'ready') { R.error = j.error || 'The review could not be built.'; return render(); }
+  setReview(j, '');
 }
 
 // Review a branch or revision ("<name>"), a pull request ("pr:<N>") or the checkout (""); cancellable.
@@ -255,9 +209,7 @@ async function selectHead(head, base = '') {
   const ctl = R.ctl = new AbortController();
   R.busy = { h: head }; R.error = ''; closePicker(); render();
   try {
-    const r = await fetch('/api/review/select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(base ? { head: head || null, base } : { head: head || null }), signal: ctl.signal });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok || j.status === 'error') throw new Error(j.error || (r.status === 404 ? 'This server cannot switch branches yet.' : `The server answered ${r.status}.`));
+    const j = await postJSON('/api/review/select', base ? { head: head || null, base } : { head: head || null }, { signal: ctl.signal });
     if (R.ctl !== ctl) return;
     R.busy = null; R.ctl = null;
     setReview(j, head, base);
@@ -280,7 +232,7 @@ function setReview(j, head, base = '') {
   markReview(Object.fromEntries((j.parts || []).filter((p) => RISK_COLOR[p.risk]).map((p) => [p.id, RISK_COLOR[p.risk]])));
   R.cur = null; render();
   loadMapStatus();
-  if (state.curFile && drawer.classList.contains('open')) { const f = state.curFile; state.curFile = null; openFile(f, 0); }
+  reloadFile();   // a changed file shows as its diff, or as plain code again
 }
 
 // Review mode on or off. While on, the panel can be hidden: the diff view, map rings and x-ray marks stay.
@@ -294,7 +246,7 @@ function hidePanel(hide) {
   panel.hidden = !R.on || hide;
   document.body.classList.toggle('review-on', !panel.hidden);   // the panel takes the top-left panel's place
   const b = $('#rvbtn');
-  b.hidden = !panel.hidden || !(R.on || R.canPick);
+  b.hidden = !panel.hidden;
   b.innerHTML = R.on ? `${I.branch}Review · ${esc(R.head ? headLabel(R.head) : 'working copy')}` : 'Review a branch…';
   b.title = R.on ? 'Show the review panel' : 'Review a branch or pull request';
   $('#rvexit').hidden = !(R.on && hide);
@@ -305,7 +257,7 @@ function exitReview() {
   R.ctl?.abort();
   showPanel(false);
   history.replaceState(history.state, '', location.pathname + location.search);
-  if (state.curFile && drawer.classList.contains('open')) { const f = state.curFile; state.curFile = null; openFile(f, 0); }
+  reloadFile();
 }
 
 /* ---------------- the panel ---------------- */
@@ -343,13 +295,13 @@ function render() {
   const d = R.data;
   const head = `<div class="rv-hd"><span class="tag">Review</span><button class="btn rv-pickbtn" data-rv="pick" title="Review another branch or pull request">${I.branch}${d ? 'Switch' : 'Pick branch'}</button><button class="icon-btn rv-x" data-rv="hide" title="Hide the panel (the review stays on)">${I.x}</button></div>`;
   if (R.busy) {
-    const sel = R.busy !== 'load', what = !sel ? (R.building ? 'Building the review…' : 'Loading the review…') : `Loading ${esc(headLabel(R.busy.h))}…`;
-    panel.innerHTML = `${head}<div class="rv-busy"><div class="rv-prog"><i></i></div><b>${what}</b><span>${R.building || sel ? 'Reading the diff and x-raying changed functions. Usually instant when cached.' : ''}</span>${sel ? '<button class="btn" data-rv="cancel">Cancel</button>' : ''}<div class="skel"><i></i><i></i><i></i></div></div>`;
+    const sel = R.busy !== 'load', what = sel ? `Loading ${esc(headLabel(R.busy.h))}…` : 'Loading the review…';
+    panel.innerHTML = `${head}<div class="rv-busy"><div class="rv-prog"><i></i></div><b>${what}</b><span>Reading the diff and x-raying changed functions.</span>${sel ? '<button class="btn" data-rv="cancel">Cancel</button>' : ''}<div class="skel"><i></i><i></i><i></i></div></div>`;
     return;
   }
   if (!d || R.error) {
     panel.innerHTML = `${head}<div class="rv-state error">${I.info}<b>${d ? 'Couldn’t switch' : 'No review'}</b><span>${esc(R.error || 'Nothing to review yet.')}</span>
-      <div class="rv-acts">${R.canPick ? `<button class="btn primary" data-rv="pick">${I.branch}Pick a branch or PR</button>` : ''}<button class="btn" data-rv="retry">${I.replay}Retry</button>${d ? '<button class="btn" data-rv="dismiss">Back to the review</button>' : ''}</div></div>`;
+      <div class="rv-acts"><button class="btn primary" data-rv="pick">${I.branch}Pick a branch or PR</button><button class="btn" data-rv="retry">${I.replay}Retry</button>${d ? '<button class="btn" data-rv="dismiss">Back to the review</button>' : ''}</div></div>`;
     return;
   }
   const s = d.stats || {}, fx = s.functions || {}, total = d.functions.length, done = d.functions.filter((f) => R.done.has(f.id)).length;
@@ -456,14 +408,10 @@ async function summarize() {
   if (!cfg.picked) { R.narrNote = 'Pick an agent and model first: the summary uses your own model usage. <button class="lnk" data-rv="settings">Choose a model</button>'; render(); return openSettings(); }
   R.narrBusy = true; R.narrNote = ''; render();
   try {
-    const r = await fetch('/api/review/narrative', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agent: cfg.agent, model: cfg.model }) });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok || j.error || !j.summary) throw new Error(j.error || (r.status === 404 ? 'This server cannot summarize yet.' : `The server answered ${r.status}.`));
-    R.narr = j;
+    R.narr = await postJSON('/api/review/narrative', { agent: cfg.agent, model: cfg.model });
   } catch (e) { R.narrNote = `Couldn’t summarize: ${esc(e.message)}`; }
   R.narrBusy = false; render();
 }
-const openSettings = () => { $('#settings').hidden = false; $('#model').focus(); };
 
 /* ---------------- map of the reviewed version ----------------
    The 3D map may show another version than the reviewed head. Updating it is a background job on the server; when it
@@ -472,7 +420,7 @@ const openSettings = () => { $('#settings').hidden = false; $('#model').focus();
    when the job is done, keeping the camera and the review. */
 async function loadMapStatus() {
   const d = R.data;
-  let j; try { j = await getJSON('/api/map/status'); } catch { return; }   // endpoint missing: no banner
+  let j; try { j = await getJSON('/api/map/status'); } catch { return; }
   if (R.data !== d) return;
   R.map = j; render();
   if (j.progress && !j.progress.done) watchMap();
@@ -481,7 +429,6 @@ async function loadMapStatus() {
 const range = ([lo, hi] = [0, 0], f = String) => (f(lo) === f(hi) ? f(lo) : `${f(lo)}–${f(hi)}`);
 const fmtSecs = (s) => (s < 120 ? `${s} s` : `${Math.round(s / 60)} min`);
 const fmtTok = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
-const nChanged = (m) => (Array.isArray(m.parts_changed) ? m.parts_changed.length : m.parts_changed || 0);
 
 function mapBanner() {
   const m = R.map, p = m?.progress; if (!m) return '';
@@ -491,7 +438,7 @@ function mapBanner() {
   }
   if (p?.error || m.error) return `<div class="rv-banner error">${I.info}<div><b>The map update failed.</b><div class="rv-err">${esc(p?.error || m.error)}</div><button class="btn" data-rv="remap">${I.replay}Try again</button></div></div>`;
   if (m.shown) return '';
-  return `<div class="rv-banner">${I.info}<div><b>Map shows another version:</b> ${nChanged(m)} of ${m.parts_total} parts differ. Their summaries and flows may not match this code.
+  return `<div class="rv-banner">${I.info}<div><b>Map shows another version:</b> ${m.parts_changed} of ${m.parts_total} parts differ. Their summaries and flows may not match this code.
     <button class="btn" data-rv="remap">${I.replay}${m.needs_model ? 'Update map…' : 'Update map (quick, no model)'}</button></div></div>`;
 }
 
@@ -501,7 +448,7 @@ function confirmRemap() {
   if (!m.needs_model) return remap();
   const cfg = state.chatCfg || {}, dlg = $('#rvdlg'), ok = state.agentList?.length && cfg.picked;
   dlg.innerHTML = `<h3>Update the map for ${esc(R.data.head?.short || 'this version')}?</h3>
-    <p>${nChanged(m)} of ${m.parts_total} parts changed; your agent reads them again and rebuilds their summaries and flows. Unchanged parts come from the cache.</p>
+    <p>${m.parts_changed} of ${m.parts_total} parts changed; your agent reads them again and rebuilds their summaries and flows. Unchanged parts come from the cache.</p>
     <dl><dt>Agent</dt><dd>${ok ? `<b>${esc(cfg.agent)}</b> · ${esc(cfg.model || 'default model')}` : '<span class="dim">none picked</span>'} <button class="lnk" data-rv="settings">Change</button></dd>
       <dt>Time</dt><dd>about ${range(m.est_seconds, fmtSecs)}</dd><dt>Usage</dt><dd>roughly ${range(m.est_tokens, fmtTok)} tokens of your ${ok ? `${esc(cfg.agent)} · ${esc(cfg.model || 'default')}` : 'agent'}</dd></dl>
     ${ok ? '' : `<p class="rv-err">${state.agentList?.length ? 'Pick an agent and model in Settings first.' : 'No agent is available on this server.'}</p>`}
@@ -514,9 +461,7 @@ async function remap() {
   const m = R.map, cfg = state.chatCfg || {};
   m.error = ''; m.progress = { phase: 'starting', done: false, elapsed: 0 }; render();
   try {
-    const r = await fetch('/api/map/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(m.needs_model ? { agent: cfg.agent, model: cfg.model } : {}) });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok || j.status === 'error' || !j.started) throw new Error(j.error || `The server answered ${r.status}.`);
+    await postJSON('/api/map/refresh', m.needs_model ? { agent: cfg.agent, model: cfg.model } : {});
   } catch (e) { m.progress = null; m.error = e.message; return render(); }
   watchMap();
 }
@@ -567,7 +512,7 @@ function gotoStop(i, fromVoice = false) {
 
 function narrate() {
   const t = R.tour;
-  const texts = t.list.map((f) => `${f.name.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/_/g, ' ')}, in ${partName(f.part)}. ${f.changes.map((c) => c.why).join('. ') || 'No analysed changes'}`);
+  const texts = t.list.map((f) => `${spoken(f)}, in ${partName(f.part)}. ${f.changes.map((c) => c.why).join('. ') || 'No analysed changes'}`);
   t.playing = speakFlow(texts, t.i, 1, (k) => { if (R.tour === t) gotoStop(k, true); }, () => { if (R.tour === t) { t.playing = false; tourBar.querySelector('[data-t=play]').innerHTML = I.speaker; } });
 }
 
@@ -588,7 +533,7 @@ async function openPicker(fresh = false) {
   if (fresh || !pick.data || Date.now() - pick.at > 30000) {
     if (fresh) { pick.data = null; renderPicker(); }
     try { pick.data = await getJSON(`/api/branches${fresh ? '?fresh=1' : ''}`); pick.at = Date.now(); pick.err = ''; if (!pick.data.prs) pick.tab = 'branches'; }
-    catch (e) { pick.err = /^404/.test(e.message) ? 'This server cannot list branches yet.' : 'The server did not answer.'; }
+    catch { pick.err = 'The server did not answer.'; }
     if (!el.hidden) renderPicker();
   }
 }
@@ -636,10 +581,9 @@ export function initReview() {
   try { Object.assign(R.f, JSON.parse(localStorage.getItem(FILTER_KEY) || '{}')); } catch { /* storage blocked */ }
   state.diffHtml = diffHtml;
   $('#dview').onclick = (e) => {
-    const b = e.target.closest('[data-v]'); if (!b || !state.curFile) return;
+    const b = e.target.closest('[data-v]'); if (!b) return;
     R.diffOn = b.dataset.v === 'diff';
-    const f = state.curFile, line = +dcode.querySelector('.cl.on')?.dataset.n || 0;
-    state.curFile = null; openFile(f, line);
+    reloadFile();
   };
   $('#rvbtn').onclick = () => R.on ? hidePanel(false) : openPicker();
   $('#rvbtn').insertAdjacentHTML('afterend', `<button id="rvexit" class="icon-btn" title="Leave review mode" hidden>${I.x}</button>`);
@@ -735,8 +679,7 @@ export function initReview() {
 
   // #review loads the server's review, #review=pr:123 / #review=branch:name a chosen one; a review already loaded opens too.
   const m = /(?:^#|&)review(?:=([^&]*))?(?:&base=([^&]*))?/.exec(location.hash);
-  getJSON('/api/branches').then(() => { R.canPick = true; hidePanel(panel.hidden && R.on); }, () => {});
   if (m?.[1]) { showPanel(true); const h = decodeURIComponent(m[1]); selectHead(h.startsWith('branch:') ? h.slice(7) : h, m[2] ? decodeURIComponent(m[2]) : ''); }
   else if (m) { showPanel(true); loadReview(); }
-  else getJSON('/api/review').then((j) => { if (j.status === 'ready' || j.status === 'building') { showPanel(true); loadReview(); } }, () => {});
+  else getJSON('/api/review').then((j) => { if (j.status === 'ready') { showPanel(true); loadReview(); } }, () => {});
 }

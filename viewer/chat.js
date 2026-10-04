@@ -1,5 +1,5 @@
 // chat.js
-// Exports: saveCfg, loadAgents, renderCfg, filterModels, pickModel, history, probeChat, md, addMsg, initSettings, initChat
+// Exports: saveCfg, loadAgents, renderCfg, filterModels, openSettings, pickModel, history, probeChat, md, addMsg, initSettings, initChat
 // Imports: state: state | drawer: getJSON | hud: level, openCode | main: act | scene: player | theme: LOOK, QUALITY | util: $, clamp, esc
 import { state } from './state.js';
 import { getJSON } from './drawer.js';
@@ -39,6 +39,8 @@ export function filterModels() {
     + (hits.length > 80 ? `<div class="more">${hits.length - 80} more, keep typing</div>` : '')
     + (!hits.length ? `<div class="more">No match. Press <kbd>return</kbd> to use “${esc($('#model').value.trim())}”.</div>` : '');
 }
+
+export function openSettings() { $('#settings').hidden = false; $('#model').focus(); }
 
 export function pickModel(m) { state.chatCfg.model = m.trim(); state.chatCfg.picked = true; $('#model').value = ''; saveCfg(); }
 
@@ -103,7 +105,7 @@ export function initSettings() {
   state.modelHits = [];
   state.modelIdx = -1;
   $('#gear').onclick = () => { $('#settings').hidden = !$('#settings').hidden; };
-  $('#chatmeta').onclick = () => { $('#settings').hidden = false; $('#model').focus(); };
+  $('#chatmeta').onclick = openSettings;
   $('#setdone').onclick = () => { $('#settings').hidden = true; };
   // Appearance: the world is built once per look, so switching saves the choice and reloads (the URL keeps it too).
   $(`#looks [data-look="${LOOK}"]`).classList.add('on');
@@ -149,7 +151,7 @@ export function initChat() {
     // Never spend someone's plan on a model they didn't choose.
     if (!state.chatCfg.picked) {
       addMsg('bot', 'Pick an agent and model first: every answer uses your own model usage.');
-      $('#settings').hidden = false; $('#model').focus();
+      openSettings();
       return;
     }
     $('#chatin').value = '';

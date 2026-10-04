@@ -1,5 +1,5 @@
 // board.js
-// Exports: structs, loadStructures, buildStruct, disposeStruct, setFacing, boardNear, usesOf, usersOf, updateStructs, structNodeAt, flyToBoard, openLens, lensPlace, showLens, setGateLines, initBoard
+// Exports: structs, loadStructures, buildStruct, disposeStruct, setFacing, boardNear, usesOf, usersOf, updateStructs, structNodeAt, flyToBoard, openLens, lensPlace, showLens, setGateLines, spoken, initBoard
 // Imports: state: state | nav: remember | drawer: drawer, getJSON, gpop, overlay | hud: I, detail, openCode, showDetail | scene: G, LineSet, SHAPES, camPos, camera, controls, dive, fly, flyTo, kindOn, meshes, nodeByKey, parts, player, pulseTex, recolor, renderer, scene, solidMats | theme: EXT, PORTS, THEME, kindOf, oklch | util: $, V3, clamp, ease, esc, hashStr, smooth, reducedMotion | voice: cancelSpeech, speak, voice | xray: mountXray
 // The metro map of a part's code (METRO.md), on an upright board under the part. Each entry point is a coloured line
 // running left to right through its main call path; side calls are short spurs; stations shared by lines are interchanges.
@@ -24,7 +24,7 @@ let legendS = null, hoverLines = null, gateLines = null, lens = null, ride = nul
 
 const trunc = (t, n) => (t.length > n ? t.slice(0, n - 1) + '…' : t);
 const fullName = (it) => (it.kind === 'method' && it.parent ? `${it.parent}.${it.name}` : it.name);
-const spoken = (it) => it.name.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/_/g, ' ');
+export const spoken = (it) => it.name.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/_/g, ' ');
 
 export async function loadStructures() {
   if (!state.codeApi) return;

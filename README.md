@@ -40,8 +40,8 @@ Skip the questions with `--agent claude --model sonnet --yes`.
 - Press ▶ on a flow to play a request step by step.
 - Click a function to see its callers and callees.
 - Ask the chat a question; it answers from the code and moves the view.
-- Review a branch or pull request: every changed function with what changed in its logic (removed error checks, inverted conditions, new network calls, changed limits), its diff, and the flows it touches. No model needed; a summary is optional.
-- Switch branches in the review picker. Only the parts whose files changed are mapped again, and Ariadne asks before it uses your model.
+- Review a branch or pull request: each changed function, what changed in its logic (a removed error check, an inverted condition, a new network call), its diff and the flows it touches. No model needed.
+- Switch branches in the review picker. Only parts whose files changed are mapped again, after you confirm.
 - ⚙ Settings: chat model, voice narration, and the Glass or Voxel look.
 
 Pinch or scroll to zoom, drag to rotate, `/` to search, `Esc` to go back.

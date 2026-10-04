@@ -1,6 +1,6 @@
 // xray.js
-// Exports: mountXray, focusChange
-// Imports: state: state | drawer: dcode, getJSON, openFile | hud: I | review: diffOps, mergeXray, openChangeLine, reviewFn, xrayRev | scene: exts | theme: EXT, extOf | util: $, clamp, esc
+// Exports: mountXray, focusChange, blocksOf, headOf, itemIds
+// Imports: state: state | chat: openSettings | drawer: dcode, getJSON, openFile, postJSON | hud: I | review: diffOps, mergeXray, openChangeLine, reviewFn, xrayRev | scene: exts | theme: EXT, extOf | util: $, clamp, esc
 // Function x-ray (XRAY.md): one function as a top-down structured flowchart inside the Lens. The layout is our own and
 // deterministic, block by block from the syntax tree: seq stacks, if = decision with yes/no columns that rejoin,
 // loop = frame with a back arrow, switch = a row of case columns, try = frame with a catch column, returns/throws = exit pills.
@@ -8,7 +8,8 @@
 // cursor and the chart's current step follow each other. In review mode a changed function shows head and base merged
 // (review.js): new steps outlined green, removed ones as red ghosts where they were, changed text as old → new.
 import { state } from './state.js';
-import { dcode, getJSON, openFile } from './drawer.js';
+import { dcode, getJSON, openFile, postJSON } from './drawer.js';
+import { openSettings } from './chat.js';
 import { I } from './hud.js';
 import { diffOps, mergeXray, openChangeLine, reviewFn, xrayRev } from './review.js';
 import { exts } from './scene.js';
@@ -24,6 +25,7 @@ const PILL = new Set(['entry', 'return', 'throw', 'exit']), TERM = new Set(['ret
 
 const fetched = new Map();   // "file:line" -> Promise<x-ray>
 const labelsOf = new Map();  // "file:start" -> { id: plain-English label }
+const explaining = new Set();  // "file:start" of functions whose labels are being asked for
 let X = null;                // the mounted chart
 let observer = null, resized = null, measureCtx = null, pending = null;   // pending: { fnId, ci } a change to show once mounted
 
@@ -60,7 +62,7 @@ function load(file, line, side = 'head') {
 export async function mountXray(el, it, onCall) {
   measureCtx ||= document.createElement('canvas').getContext('2d');
   if (!observer) { observer = new MutationObserver(fromDrawer); observer.observe(dcode, { attributes: true, attributeFilter: ['class'], subtree: true }); }
-  const me = X = { el, it, onCall, data: null, expanded: new Set(), all: false, cur: null, note: '', busy: false, rv: null, only: false };
+  const me = X = { el, it, onCall, data: null, expanded: new Set(), all: false, cur: null, note: '', rv: null, only: false };
   el.innerHTML = `<div class="xr-bar"></div><div class="xr-wrap"><div class="xr-view" tabindex="0" aria-label="Function x-ray"><div class="xr-skel">${'<i></i>'.repeat(7)}</div></div></div>`;
   renderBar();
   let [data] = await Promise.all([load(it.file, it.line), document.fonts.ready]);
@@ -115,7 +117,7 @@ function renderState() {
 function renderBar() {
   const bar = X.el.querySelector('.xr-bar'), d = X.data, ready = d?.status === 'ready';
   const has = ready && labelsOf.has(X.fnKey), n = ready ? d.nodes.length : 0;
-  bar.innerHTML = `<button class="btn tinted xr-explain" data-xa="explain" ${ready && !X.busy ? '' : 'disabled'}>${X.busy ? '<span class="spin"></span>Explaining…' : `${I.spark}${has ? 'Explain again' : 'Explain in plain English'}`}</button>
+  bar.innerHTML = `<button class="btn tinted xr-explain" data-xa="explain" ${ready && !explaining.has(X.fnKey) ? '' : 'disabled'}>${explaining.has(X.fnKey) ? '<span class="spin"></span>Explaining…' : `${I.spark}${has ? 'Explain again' : 'Explain in plain English'}`}</button>
     ${ready && X.rv ? `<button class="btn${X.only ? ' on' : ''}" data-xa="only" aria-pressed="${X.only}" title="Fold steps that did not change">Changes only</button><span class="rv-key"><i class="add"></i>new<i class="del"></i>removed<i class="ch"></i>changed</span>` : ''}
     ${ready && !X.only && hasCollapsible(d.tree) ? `<button class="btn" data-xa="all">${X.all ? 'Collapse long branches' : 'Expand all'}</button>` : ''}
     <span class="xr-meta">${ready ? `${n} steps · lines ${d.fn.start}–${d.fn.end}${d.fn.lang ? ` · ${esc(d.fn.lang)}` : ''}` : ''}</span>
@@ -124,11 +126,11 @@ function renderBar() {
 }
 
 /* ---------------- tree helpers ---------------- */
-const blocksOf = (o) => ('if' in o ? [o.then, o.else] : 'loop' in o ? [o.body] : 'switch' in o ? o.cases.map((c) => c.body) : 'try' in o ? [o.body, o.catch, o.finally] : 'seq' in o ? [o] : []).filter(Boolean);
-const headOf = (o) => (typeof o === 'string' ? o : o.if ?? o.loop ?? o.switch ?? o.try ?? null);
+export const blocksOf = (o) => ('if' in o ? [o.then, o.else] : 'loop' in o ? [o.body] : 'switch' in o ? o.cases.map((c) => c.body) : 'try' in o ? [o.body, o.catch, o.finally] : 'seq' in o ? [o] : []).filter(Boolean);
+export const headOf = (o) => (typeof o === 'string' ? o : o.if ?? o.loop ?? o.switch ?? o.try ?? null);
 function countIds(b) { let n = 0; for (const x of b?.seq || []) n += typeof x === 'string' ? 1 : 1 + blocksOf(x).reduce((a, c) => a + countIds(c), 0); return n; }
 function idsIn(b, out = []) { for (const x of b?.seq || []) { const h = headOf(x); if (h) out.push(h); if (typeof x !== 'string') blocksOf(x).forEach((c) => idsIn(c, out)); } return out; }
-const itemIds = (x) => (typeof x === 'string' ? [x] : [headOf(x), ...blocksOf(x).flatMap((c) => idsIn(c))].filter(Boolean));
+export const itemIds = (x) => (typeof x === 'string' ? [x] : [headOf(x), ...blocksOf(x).flatMap((c) => idsIn(c))].filter(Boolean));
 const changed = (id) => !!(X.byId[id]?.rv || X.byId[id]?.changes?.length);
 // Changes only: an item with no new, removed or changed step in it (entry and exit always stay)
 const quiet = (x) => X.only && !(typeof x === 'string' && /^(entry|exit)$/.test(X.byId[x]?.kind)) && !itemIds(x).some(changed);
@@ -454,7 +456,7 @@ function wire() {
     if (a === 'explain') return explain();
     if (a === 'all') { X.all = !X.all; renderBar(); return renderChart(); }
     if (a === 'only') { X.only = !X.only; X.expanded.clear(); renderBar(); return renderChart(); }
-    if (a === 'pick') { $('#settings').hidden = false; $('#model').focus(); return; }
+    if (a === 'pick') return openSettings();
     const m = e.target.closest('[data-more]'); if (m) return expand(m.dataset.more);
     const b = e.target.closest('.xn[data-id]'); if (b) activate(b.dataset.id, true);
   };
@@ -527,24 +529,19 @@ async function explain() {
   if (!state.agentList?.length) { X.note = 'No chat agent is available on this server, so there is nothing to explain with.'; return renderBar(); }
   if (!cfg.picked) {
     X.note = `Pick an agent and model first: explaining uses your own model usage. <button class="lnk" data-xa="pick">Choose a model</button>`;
-    renderBar(); $('#settings').hidden = false; $('#model').focus();
+    renderBar(); openSettings();
     return;
   }
-  const me = X, fn = X.data.fn;
-  X.busy = true; X.note = ''; renderBar();
+  const fn = X.data.fn, key = X.fnKey;
+  explaining.add(key); X.note = ''; renderBar();
+  let note;
   try {
-    const r = await fetch('/api/xray/explain', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ file: fn.file, line: fn.start, agent: cfg.agent, model: cfg.model }) });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok || j.error || !j.labels) throw new Error(j.error || (r.status === 404 ? 'This server cannot explain yet.' : `The server answered ${r.status}.`));
-    const key = `${fn.file}:${fn.start}`, n = Object.keys(j.labels).length;
-    labelsOf.set(key, j.labels);
-    me.busy = false;
-    if (X?.fnKey !== key || !X.chart?.isConnected) return;   // the Lens moved on; the labels show when it comes back
-    X.busy = false;   // the same function may have been re-mounted while the model answered
-    X.note = n ? `Plain-English labels added to ${n} steps, above their code.` : 'The model gave no labels for this function.';
-    renderBar(); renderChart();
-  } catch (e) {
-    if (X !== me) return;
-    X.busy = false; X.note = `Couldn’t explain: ${esc(e.message)}`; renderBar();
-  }
+    const { labels } = await postJSON('/api/xray/explain', { file: fn.file, line: fn.start, agent: cfg.agent, model: cfg.model });
+    labelsOf.set(key, labels);
+    const n = Object.keys(labels).length;
+    note = n ? `Plain-English labels added to ${n} steps, above their code.` : 'The model gave no labels for this function.';
+  } catch (e) { note = `Couldn’t explain: ${esc(e.message)}`; }
+  explaining.delete(key);
+  if (X?.fnKey !== key || !X.chart?.isConnected) return;   // the Lens moved on; labels show when it comes back
+  X.note = note; renderBar(); renderChart();
 }

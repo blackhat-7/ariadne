@@ -1,11 +1,11 @@
 // main.js
 // Exports: (none: entry point)
-// Imports: state: state | board: initBoard, loadStructures | review: initReview | nav: initNav | chat: initChat, initSettings, loadAgents, probeChat | drawer: closeDrawer, closePop, drawer, gpop, initCodeBrowser, initCodeLink, navHist, openFinder, overlay, probeCodeApi, updateBeacon | hud: buildLegend, buildSearch, drawMini, initBreadcrumb, initDetailPanel, initHoverCard, initLabels, initLegend, initMinimap, initResizablePanels, initSearch, level, openCode, openSearch, setKinds, stepOut, updateCrumbs, updateHover, updateLabels | scene: LOW, build, camPos, camera, clusters, composer, controls, exts, findEnt, fly, flyOverview, flyToEnt, initCameraFlight, initFlowPlayback, initLod, initNavigation, initPicking, initShaders, initState, initThreeSetup, initWorldModel, kindOn, parts, playFlow, player, renderer, select, setEmphasis, setResolution, stopFlow, uTime, updateFly, updateLOD, updatePlayer, updateViewOffset | theme: initVocabulary | util: $, esc, initUtil | voice: initVoice
+// Imports: state: state | board: initBoard, loadStructures | review: initReview | nav: initNav | chat: initChat, initSettings, loadAgents, probeChat | drawer: closeDrawer, closePop, drawer, gpop, initCodeBrowser, initCodeLink, openFinder, overlay, probeCodeApi, updateBeacon | hud: buildLegend, buildSearch, drawMini, initBreadcrumb, initDetailPanel, initHoverCard, initLabels, initLegend, initMinimap, initResizablePanels, initSearch, level, openCode, openSearch, setKinds, stepOut, updateCrumbs, updateHover, updateLabels | scene: LOW, build, camPos, camera, clusters, composer, controls, exts, findEnt, fly, flyOverview, flyToEnt, initCameraFlight, initFlowPlayback, initLod, initNavigation, initPicking, initShaders, initState, initThreeSetup, initWorldModel, kindOn, parts, playFlow, player, renderer, select, setEmphasis, setResolution, stopFlow, uTime, updateFly, updateLOD, updatePlayer, updateViewOffset | theme: initVocabulary | util: $, esc, initUtil | voice: initVoice
 import * as THREE from 'three';
 import { state } from './state.js';
 import { initBoard, loadStructures } from './board.js';
 import { initChat, initSettings, loadAgents, probeChat } from './chat.js';
-import { closeDrawer, closePop, drawer, gpop, initCodeBrowser, initCodeLink, navHist, openFinder, overlay, probeCodeApi, updateBeacon } from './drawer.js';
+import { closeDrawer, closePop, drawer, gpop, initCodeBrowser, initCodeLink, openFinder, overlay, probeCodeApi, updateBeacon } from './drawer.js';
 import { buildLegend, buildSearch, drawMini, initBreadcrumb, initDetailPanel, initHoverCard, initLabels, initLegend, initMinimap, initResizablePanels, initSearch, level, openCode, openSearch, setKinds, stepOut, updateCrumbs, updateHover, updateLabels } from './hud.js';
 import { LOW, build, camPos, camera, clusters, composer, controls, exts, findEnt, fly, flyOverview, flyToEnt, initCameraFlight, initFlowPlayback, initLod, initNavigation, initPicking, initShaders, initState, initThreeSetup, initWorldModel, kindOn, parts, playFlow, player, renderer, select, setEmphasis, setResolution, stopFlow, uTime, updateFly, updateLOD, updatePlayer, updateViewOffset } from './scene.js';
 import { initVocabulary } from './theme.js';
@@ -104,7 +104,6 @@ function initKeyboard() {
   /* ---------------- keyboard ---------------- */
   addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p' && state.codeApi) { e.preventDefault(); openFinder(); return; }
-    if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && drawer.classList.contains('open')) { e.preventDefault(); navHist(e.key === 'ArrowLeft' ? -1 : 1); return; }
     if (e.target.closest?.('input,textarea')) return;
     if (e.key === '/') { e.preventDefault(); openSearch(); }
     else if (e.key === 'Escape') {
