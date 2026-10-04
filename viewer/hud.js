@@ -92,13 +92,12 @@ export function updateLabels(dt) {
   }
   cand.sort((a, b) => b.score - a.score);
   let n = 0;
+  const hit = (L, y) => { for (let i = 0; i < n; i++) { const A = acc[i]; if (L.x0 < A.x0 + A.w + 14 && L.x0 + L.w + 14 > A.x0 && y < A.y0 + A.h + 8 && y + L.h + 8 > A.y0) return A; } return null; };
   for (const L of cand) {
-    let hit = false;
-    for (let i = 0; i < n; i++) {
-      const A = acc[i];
-      if (L.x0 < A.x0 + A.w + 14 && L.x0 + L.w + 14 > A.x0 && L.y0 < A.y0 + A.h + 8 && L.y0 + L.h + 8 > A.y0) { hit = true; break; }
-    }
-    if (!hit) { acc[n++] = L; L.ok = true; }
+    const A = hit(L, L.y0);
+    // In the way of a placed label: slide just clear of it (at most its own height, 48px) rather than vanish.
+    const y = !A ? L.y0 : [A.y0 + A.h + 8, A.y0 - 8 - L.h].find((y) => Math.abs(y - L.y0) <= Math.min(L.h, 48) && !hit(L, y));
+    if (y !== undefined) { L.y0 = y; acc[n++] = L; L.ok = true; }
   }
   const k = Math.min(1, dt * 10);
   for (const L of labels) {
@@ -243,7 +242,7 @@ export function hoverHtml(ent) {
   }
   if (ent.type === 'external') { const e = exts.get(ent.id); return readout({ kind: EXT[extOf(e)].label, color: EXT[extOf(e)].color, name: e.id, sub: 'external', stats: [stat(I.inArrow, e.users.size, e.users.size === 1 ? 'part uses it' : 'parts use it', 'amber')] }); }
   if (ent.type === 'dock') { const d = docks.get(ent.id.slice(5)); return readout({ kind: 'outside systems', color: EXT[d.kind].color, name: d.name, summary: d.members.map((e) => e.id).join(', '), stats: [stat(I.globe, d.members.length, 'systems')] }); }
-  if (ent.type === 'cluster') { const c = clusters.get(ent.id); return readout({ kind: 'group', color: c.color, name: c.name, summary: c.summary, stats: [stat(I.layers, c.parts.length, 'parts')] }); }
+  if (ent.type === 'cluster') { const c = clusters.get(ent.id); return readout({ kind: 'domain', color: c.color, name: c.name, summary: c.summary, stats: [stat(I.layers, c.parts.length, 'parts')] }); }
   if (ent.type === 'snode') {
     const it = ent.node.item, p = ent.node.owner;
     const types = (it.usesT || []).map((i) => p.struct.items[i].name);
@@ -293,14 +292,14 @@ export function showDetail(ent) {
     if (p.struct) {
       const S = p.struct, c = { type: 0, method: 0, function: 0 }; for (const it of S.items) if (!it.test || state.showTests) c[it.kind]++;
       h += sec('Code structure', `<div class="stats">${stat(I.type, c.type, 'types', 'green')}${stat(I.method, c.method, 'methods', 'violet')}${stat(I.fn, c.function, 'functions', 'cyan')}</div>
-        <p class="meta">Metro: ${S.lines.length} lines through ${S.placed.length} stations · click a station for the Lens</p>
+        <p class="meta" title="Explore in 3D draws the code as a metro map: each line follows an entry point through the functions it calls. The Lens shows a function's callers and callees.">Metro: ${S.lines.length} lines through ${S.placed.length} stations · click a station for the Lens</p>
         <div class="ctl"><button class="btn primary" data-struct="${esc(p.id)}">${I.cube}Explore in 3D</button>
         <label class="tog"><input type="checkbox" data-tests ${state.showTests ? 'checked' : ''}><i></i>Tests</label></div>`);
     } else if (state.codeApi && state.structStatus === 'building') h += sec('Code structure', `<div class="skel"><i></i><i></i><i></i></div><p class="meta">Indexing the repo…</p>`);
     h += '<div data-slot="gates"></div><div data-slot="states"></div>';
   } else if (ent.type === 'cluster') {
     const c = clusters.get(ent.id);
-    h = head(pill('group', c.color), c.name) + `<p class="lead">${esc(c.summary)}</p>` +
+    h = head(pill('domain', c.color), c.name) + `<p class="lead">${esc(c.summary)}</p>` +
       sec('Parts', c.parts.map((p) => row(KINDS[kindOf(p)].icon, `<b>${goLink(p.id, p.name)}</b>`, `<small>${esc(p.summary)}</small>`, KINDS[kindOf(p)].color)).join(''), c.parts.length);
   } else if (ent.type === 'dock') {
     const d = docks.get(ent.id.slice(5));
@@ -375,7 +374,7 @@ async function fillGates(pid) {
   if (!slot) return;
   const mine = all.filter((g) => gateParts(g).includes(pid));
   if (!mine.length) return slot.remove();
-  slot.outerHTML = sec('Gates', mine.map((g) => {
+  slot.outerHTML = sec('Config switches', mine.map((g) => {
     const [icon, color] = gateLook(g), r = g.reads.filter((x) => x.part === pid).length, c = g.checks.filter((x) => x.part === pid).length, more = gateParts(g).length - 1;
     return `<div class="item gate" data-gate="${all.indexOf(g)}" tabindex="0" style="--k:${color}"><span class="ii">${icon}</span><div class="t"><b class="mono">${esc(g.name)}</b>${g.default != null ? `<span class="gdef" title="default">= ${esc(g.default)}</span>` : ''}
       <small>${plural(r, 'read')} · ${plural(c, 'check')}${more > 0 ? ` · also ${plural(more, 'other part')}` : ''}</small></div></div>`;
@@ -420,13 +419,13 @@ async function pinGate(i, anchor) {
 async function initGateList() {
   const all = await loadGates();
   if (!all.length) return;
-  $('#crumbs').insertAdjacentHTML('beforebegin', '<button id="gatesbtn" class="tag" aria-expanded="false"></button>');
+  $('#crumbs').insertAdjacentHTML('beforebegin', '<button id="gatesbtn" class="tag" aria-expanded="false" title="Env vars and feature flags that switch how the code behaves"></button>');
   $('#crumbs').insertAdjacentHTML('beforebegin', `<div id="gatelist" hidden>${all.map((g, i) => {
     const [icon, color] = gateLook(g);
     return `<button class="gl-row" data-gate="${i}" style="--k:${color}"><span class="gi">${icon}</span><span class="nm">${esc(g.name)}</span><em>${g.checks.length ? plural(g.checks.length, 'check') : plural(g.reads.length, 'read')} · ${plural(gateParts(g).length, 'part')}</em></button>`;
   }).join('')}</div>`);
   const btn = $('#gatesbtn'), list = $('#gatelist');
-  const label = () => { btn.innerHTML = `Gates (${all.length}) ${list.hidden ? '▸' : '▾'}`; btn.setAttribute('aria-expanded', !list.hidden); };
+  const label = () => { btn.innerHTML = `Config switches (${all.length}) ${list.hidden ? '▸' : '▾'}`; btn.setAttribute('aria-expanded', !list.hidden); };
   label();
   btn.onclick = () => { list.hidden = !list.hidden; label(); if (list.hidden) closeGateCard(); };
   list.onclick = (e) => { const r = e.target.closest('[data-gate]'); if (r) pinGate(r.dataset.gate, r); };
@@ -561,7 +560,10 @@ export function openExcerpt(ref) {
 /* ---------------- breadcrumb / levels ---------------- */
 export function level() {
   const t = controls.target, d = camPos.distanceTo(t);
-  let part = state.focusPart && state.focusPart.unfold > 0.35 ? state.focusPart : null;
+  // A part names the place only once the camera is nearer its own framing distance than its domain's,
+  // else a part that happens to be mid-view while a domain is framed would claim the breadcrumb.
+  const fp = state.focusPart, near = fp && Math.max(fp.focusDist * 1.2, (fp.focusDist + fp.clusterObj.r * 2.5) / 2);
+  let part = fp && fp.unfold > 0.35 && camPos.distanceTo(fp.pos) < near ? fp : null;
   let cluster = null, cbest = 1e9;
   for (const c of clusters.values()) { if (!c.shell) continue; const dd = c.pos.distanceTo(t); if (c.open > 0.5 && dd < c.r * 1.3 && dd < cbest) { cbest = dd; cluster = c; } }
   if (part) cluster = part.clusterObj;
@@ -616,7 +618,7 @@ export function drawMini() {
 export function buildSearch() {
   state.searchItems = [];
   for (const p of parts.values()) state.searchItems.push({ ty: p.kind, name: p.name, sub: `${p.id} · ${p.clusterObj.name} — ${p.summary || ''}`, go: () => dive({ type: 'part', id: p.id }) });
-  for (const c of clusters.values()) if (c.shell) state.searchItems.push({ ty: 'group', name: c.name, sub: c.summary, go: () => dive({ type: 'cluster', id: c.id }) });
+  for (const c of clusters.values()) if (c.shell) state.searchItems.push({ ty: 'domain', name: c.name, sub: c.summary, go: () => dive({ type: 'cluster', id: c.id }) });
   for (const d of docks.values()) state.searchItems.push({ ty: 'systems', name: d.name, sub: `${d.members.length} outside systems`, go: () => dive({ type: 'dock', id: d.id }) });
   for (const e of exts.values()) state.searchItems.push({ ty: e.kind || 'ext', name: e.id, sub: `external · used by ${e.users.size}`, go: () => dive({ type: 'external', id: e.id }) });
   (state.M.systemFlows || []).forEach((f, i) => state.searchItems.push({ ty: 'flow', name: f.title, sub: 'system flow', go: () => playFlow(`system#${i}`) }));
@@ -644,8 +646,8 @@ function resultLook(ty) {
   if (KINDS[ty]) return [KINDS[ty].icon, KINDS[ty].color, KINDS[ty].label];
   if (EXT[ty]) return [EXT[ty].icon, EXT[ty].color, EXT[ty].label];
   return {
-    group: [I.layers, 'var(--lavender)', 'Group'], systems: [I.globe, 'var(--blue)', 'Systems'], ext: [I.globe, 'var(--blue)', 'External'],
-    flow: [I.flow, 'var(--cyan)', 'Flow'], func: [I.fn, 'var(--cyan)', 'Function'], gate: [I.flag, 'var(--violet)', 'Gate'], method: [I.method, 'var(--violet)', 'Method'], type: [I.type, 'var(--green)', 'Type'],
+    domain: [I.layers, 'var(--lavender)', 'Domain'], systems: [I.globe, 'var(--blue)', 'Systems'], ext: [I.globe, 'var(--blue)', 'External'],
+    flow: [I.flow, 'var(--cyan)', 'Flow'], func: [I.fn, 'var(--cyan)', 'Function'], gate: [I.flag, 'var(--violet)', 'Config switch'], method: [I.method, 'var(--violet)', 'Method'], type: [I.type, 'var(--green)', 'Type'],
   }[ty] || [I.code, 'var(--dim)', ty];
 }
 
@@ -693,7 +695,7 @@ export function buildLegend() {
   // link kinds: the same solid / dashed / dotted as the 3D lines and streams (links.js STYLE); the arrowhead marks the callee
   const sw = (dash, cls = '') => `<svg class="lk ${cls}" viewBox="0 0 24 8"><path d="M1 4h17" stroke-dasharray="${dash}"/><path d="m17 1 4 3-4 3z" class="hd"/></svg>`;
   $('#leglinks').innerHTML = [[sw(''), 'call'], [sw('3.5 2.5'), 'event / queue'], [sw('0.1 3'), 'reads / writes data'],
-    ['<span class="beam"></span>', 'traffic between groups'], [sw('', 'ent'), 'where traffic enters']]
+    ['<span class="beam"></span>', 'traffic between domains'], [sw('', 'ent'), 'where traffic enters']]
     .map(([s, t]) => `<div class="row">${s}${t}</div>`).join('') + '<div class="note">arrow points at who is called · thicker = more · hover a group to name its links</div>';
 }
 
