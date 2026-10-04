@@ -1,6 +1,6 @@
 // main.js
 // Exports: (none: entry point)
-// Imports: state: state | board: initBoard, loadStructures | review: initReview | nav: initNav | chat: initChat, initSettings, loadAgents, probeChat | drawer: closeDrawer, closePop, drawer, gpop, initCodeBrowser, initCodeLink, openFinder, overlay, probeCodeApi, updateBeacon | hud: buildLegend, buildSearch, drawMini, initBreadcrumb, initDetailPanel, initHoverCard, initLabels, initLegend, initMinimap, initResizablePanels, initSearch, level, openCode, openSearch, setKinds, stepOut, updateCrumbs, updateHover, updateLabels | scene: LOW, build, camPos, camera, clusters, composer, controls, exts, findEnt, fly, flyOverview, flyToEnt, initCameraFlight, initFlowPlayback, initLod, initNavigation, initPicking, initShaders, initState, initThreeSetup, initWorldModel, kindOn, parts, playFlow, player, renderer, select, setEmphasis, setResolution, stopFlow, uTime, updateFly, updateLOD, updatePlayer, updateViewOffset | theme: initVocabulary | util: $, esc, initUtil | voice: initVoice
+// Imports: state: state | board: initBoard, loadStructures | review: initReview | routes: buildRoutes, updateRoutes | nav: initNav | chat: initChat, initSettings, loadAgents, probeChat | drawer: closeDrawer, closePop, drawer, gpop, initCodeBrowser, initCodeLink, openFinder, overlay, probeCodeApi, updateBeacon | hud: buildLegend, buildSearch, drawMini, initBreadcrumb, initDetailPanel, initHoverCard, initLabels, initLegend, initMinimap, initResizablePanels, initSearch, level, openCode, openSearch, setKinds, stepOut, updateCrumbs, updateHover, updateLabels | scene: LOW, build, camPos, camera, clusters, composer, controls, exts, findEnt, fly, flyOverview, flyToEnt, initCameraFlight, initFlowPlayback, initLod, initNavigation, initPicking, initShaders, initState, initThreeSetup, initWorldModel, kindOn, parts, playFlow, player, renderer, select, setEmphasis, setResolution, stopFlow, uTime, updateFly, updateLOD, updatePlayer, updateViewOffset | theme: initVocabulary | util: $, esc, initUtil | voice: initVoice
 import * as THREE from 'three';
 import { state } from './state.js';
 import { initBoard, loadStructures } from './board.js';
@@ -11,6 +11,7 @@ import { LOW, build, camPos, camera, clusters, composer, controls, exts, findEnt
 import { initVocabulary } from './theme.js';
 import { initVoice } from './voice.js';
 import { initReview } from './review.js';
+import { buildRoutes, updateRoutes } from './routes.js';
 import { initNav } from './nav.js';
 import { $, esc, initUtil } from './util.js';
 
@@ -65,6 +66,7 @@ export function frame(now) {
   if (miniDue && state.frameNo % 6 === 0) { miniDue = false; drawMini(); }
   if (state.frameNo % 10 === 0) updateCrumbs();
   if (state.mouseDirty && state.frameNo % 2 === 0) { state.mouseDirty = false; updateHover(); }
+  updateRoutes();   // after updateHover: a route under the pointer keeps its pointer cursor
   const draw = state.redraw || (!LOW && now - lastDraw >= AMBIENT);
   if (draw) {
     state.redraw = false; miniDue = true;
@@ -138,14 +140,7 @@ async function initBoot() {
     $('#tname').textContent = state.M.title || 'ariadne';
     $('#summary').textContent = state.M.summary || '';
     $('#rev').textContent = [state.M.revision, state.mapUrl.includes('sample') ? 'sample map' : ''].filter(Boolean).join(' · ');
-    $('#sysflows').innerHTML = (state.M.systemFlows || []).map((f, i) => `<button data-play="system#${i}"><b>▶</b>${esc(f.title)}</button>`).join('');
-    const nf = (state.M.systemFlows || []).length;
-    $('#flowsbtn').hidden = !nf;
-    const setFlowsBtn = () => { $('#flowsbtn').textContent = `Flows (${nf}) ${$('#sysflows').hidden ? '▸' : '▾'}`; };
-    setFlowsBtn();
-    $('#flowsbtn').onclick = () => { $('#sysflows').hidden = !$('#sysflows').hidden; setFlowsBtn(); };
-    $('#sysflows').onclick = (e) => { const b = e.target.closest('[data-play]'); if (b) playFlow(b.dataset.play); };
-    build(); buildLegend(); buildSearch();
+    build(); buildRoutes(); buildLegend(); buildSearch();
     controls.maxDistance = state.overviewDist * 2.5;
     controls.target.set(0, 0, 0);
     camPos.set(0, Math.sin(0.9) * state.overviewDist * 1.4, Math.cos(0.9) * state.overviewDist * 1.4);

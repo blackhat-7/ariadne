@@ -420,8 +420,8 @@ async function pinGate(i, anchor) {
 async function initGateList() {
   const all = await loadGates();
   if (!all.length) return;
-  $('#flowsbtn').insertAdjacentHTML('afterend', '<button id="gatesbtn" class="tag" aria-expanded="false"></button>');
-  $('#sysflows').insertAdjacentHTML('afterend', `<div id="gatelist" hidden>${all.map((g, i) => {
+  $('#crumbs').insertAdjacentHTML('beforebegin', '<button id="gatesbtn" class="tag" aria-expanded="false"></button>');
+  $('#crumbs').insertAdjacentHTML('beforebegin', `<div id="gatelist" hidden>${all.map((g, i) => {
     const [icon, color] = gateLook(g);
     return `<button class="gl-row" data-gate="${i}" style="--k:${color}"><span class="gi">${icon}</span><span class="nm">${esc(g.name)}</span><em>${g.checks.length ? plural(g.checks.length, 'check') : plural(g.reads.length, 'read')} · ${plural(gateParts(g).length, 'part')}</em></button>`;
   }).join('')}</div>`);

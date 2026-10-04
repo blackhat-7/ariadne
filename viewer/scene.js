@@ -838,7 +838,8 @@ export function gotoStep(i, fromVoice = false) {
   if (drawer.classList.contains('open') && s.ref) { const m = /^(.*):(\d+)$/.exec(s.ref); if (m) openFile(m[1], +m[2]); }
   const mid = new V3().addVectors(player.a, player.b).multiplyScalar(0.5);
   if (player.part) { const p = player.part; mid.lerp(p.pos, 0.55); flyTo(mid, p.focusDist * 0.95, { dur: i === 0 ? 1.3 : 0.9, hist: i === 0 }); }
-  else flyTo(mid, clamp(player.a.distanceTo(player.b) * 1.4, 80, 320), { dur: 1.1, hist: i === 0 });
+  // far enough that both ends fit (with the arc's lift and the flow bar), however long the step
+  else flyTo(mid, clamp(player.a.distanceTo(player.b) * 1.7, 80, state.overviewDist), { dur: 1.1, hist: i === 0 });
   const unv = s.ref && state.M.code?.[s.ref]?.verified === false;
   $('#fbcap').innerHTML = `<span class="n">${i + 1}/${player.steps.length}</span><span>${esc(s.text)}${s.ref ? ` — <span class="rf" data-ref="${esc(s.ref)}">${esc(s.ref.split('/').pop())}</span>${unv ? ' <span class="unv" title="unverified">⚠</span>' : ''}` : ''}</span>`;
   $('#fbprog').querySelectorAll('i').forEach((el, j) => { el.className = j < i ? 'done' : j === i ? 'cur' : ''; });
