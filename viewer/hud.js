@@ -1,12 +1,12 @@
 // hud.js
 // Exports: labelLayer, labels, Label, cand, acc, tmpV, updateLabels, hoverEl, updateHover, hoverHtml, detail, dbody, codeslot, openPanel, closeDetail, rf, goLink, flowHtml, showDetail, openCode, openExcerpt, level, updateCrumbs, stepOut, mini, mg, drawMini, buildSearch, fuzzy, runSearch, renderResults, openSearch, closeSearch, shapeIcons, buildLegend, setKinds, resizable, addHandle, panelMax, panelMin, initLabels, initHoverCard, initDetailPanel, initBreadcrumb, initMinimap, initSearch, initLegend, initResizablePanels
-// Imports: state: state | board: buildStruct, disposeStruct, flyToBoard, setFacing, structs | drawer: codeHtml, drawer, dtree, openFile | main: act | scene: G, SHAPES, camPos, camera, clusters, controls, dive, docks, entFromEvent, entFromNode, exts, flyOverview, flyToEnt, gotoStep, kindOn, nodes, parts, playFlow, player, recolor, select, stage | theme: EXT, KINDS, PORTS, VOXEL, extOf, kindOf | util: $, V3, clamp, esc | voxel: voxPreview | voxels: externalModel, partModel
+// Imports: state: state | board: buildStruct, disposeStruct, flyToBoard, setFacing, setGateLines, structs | drawer: codeHtml, drawer, dtree, getJSON, openFile | main: act | scene: G, SHAPES, camPos, camera, clusters, controls, dive, docks, entFromEvent, entFromNode, exts, flyOverview, flyToEnt, gotoStep, kindOn, nodes, parts, playFlow, player, recolor, select, setEmphasis, stage | theme: EXT, KINDS, PORTS, VOXEL, extOf, kindOf | util: $, V3, clamp, esc | voxel: voxPreview | voxels: externalModel, partModel
 import * as THREE from 'three';
 import { state } from './state.js';
-import { buildStruct, disposeStruct, flyToBoard, setFacing, structs } from './board.js';
-import { codeHtml, drawer, dtree, openFile } from './drawer.js';
+import { buildStruct, disposeStruct, flyToBoard, setFacing, setGateLines, structs } from './board.js';
+import { codeHtml, drawer, dtree, getJSON, openFile } from './drawer.js';
 import { act } from './main.js';
-import { G, SHAPES, camPos, camera, clusters, controls, dive, docks, entFromEvent, entFromNode, exts, flyOverview, flyToEnt, gotoStep, kindOn, nodes, parts, playFlow, player, recolor, select, stage } from './scene.js';
+import { G, SHAPES, camPos, camera, clusters, controls, dive, docks, entFromEvent, entFromNode, exts, flyOverview, flyToEnt, gotoStep, kindOn, nodes, parts, playFlow, player, recolor, select, setEmphasis, stage } from './scene.js';
 import { EXT, KINDS, PORTS, VOXEL, extOf, kindOf } from './theme.js';
 import { $, V3, clamp, esc } from './util.js';
 import { voxPreview } from './voxel.js';
@@ -42,6 +42,14 @@ export const I = {
   cube: ic('<path d="m12 3 8 4.5v9L12 21l-8-4.5v-9z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/>'),
   info: ic('<circle cx="12" cy="12" r="9"/><path d="M12 16v-4.5M12 8h.01"/>'),
   code: ic('<path d="m8 7-5 5 5 5M16 7l5 5-5 5"/>'),
+  xray: ic('<path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M12 7.5v3M9 12.5h6M12 12.5v4M9.5 16.5h5"/>'),
+  spark: ic('<path d="M11 3.5 12.6 8.4 17.5 10 12.6 11.6 11 16.5 9.4 11.6 4.5 10 9.4 8.4z"/><path d="M18 15.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/>'),
+  branch: ic('<circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="9" r="2"/><path d="M6 7v10M18 11c0 4-6 3-11.5 6.5"/>'),
+  shield: ic('<path d="M12 3.5 19 6v5.5c0 4.2-2.9 7.6-7 9-4.1-1.4-7-4.8-7-9V6z"/>'),
+  flag: ic('<path d="M5 21V4.5M5 4.5h11.5l-2.2 4 2.2 4H5"/>'),
+  env: ic('<rect x="3" y="4.5" width="18" height="15" rx="3"/><path d="m7 10 3 2.5L7 15M12.5 15h4.5"/>'),
+  config: ic('<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>'),
+  states: ic('<rect x="2.5" y="9" width="7" height="6" rx="3"/><rect x="14.5" y="9" width="7" height="6" rx="3"/><path d="M9.5 12h5M12.5 10l2 2-2 2"/>'),
 };
 // Colours for code-structure items (methods, functions, types).
 const SNODE = { type: { color: 'var(--green)', icon: I.type }, method: { color: 'var(--violet)', icon: I.method }, function: { color: 'var(--cyan)', icon: I.fn } };
@@ -288,6 +296,7 @@ export function showDetail(ent) {
         <div class="ctl"><button class="btn primary" data-struct="${esc(p.id)}">${I.cube}Explore in 3D</button>
         <label class="tog"><input type="checkbox" data-tests ${state.showTests ? 'checked' : ''}><i></i>Tests</label></div>`);
     } else if (state.codeApi && state.structStatus === 'building') h += sec('Code structure', `<div class="skel"><i></i><i></i><i></i></div><p class="meta">Indexing the repo…</p>`);
+    h += '<div data-slot="gates"></div><div data-slot="states"></div>';
   } else if (ent.type === 'cluster') {
     const c = clusters.get(ent.id);
     h = head(pill('group', c.color), c.name) + `<p class="lead">${esc(c.summary)}</p>` +
@@ -327,6 +336,213 @@ export function showDetail(ent) {
     if (n.ref) h += `<div class="code">${codeHtml(n.ref)}</div>`;
   }
   dbody.innerHTML = h; openPanel(); dbody.parentElement.scrollTop = 0;
+  if (ent.type === 'part') { fillGates(ent.id); fillStates(ent.id); }
+}
+
+/* ---------------- gates and states (XRAY.md §2, §3) ----------------
+   Gates: env vars, feature flags and config a part reads or checks. Hover lights the parts and metro lines involved;
+   a click opens a small card with every read and check. States: inferred state machines, drawn as compact diagrams. */
+const GATE = { env: [I.env, 'var(--amber)', 'Env var'], flag: [I.flag, 'var(--violet)', 'Feature flag'], config: [I.config, 'var(--sky)', 'Config'] };
+const gateLook = (g) => GATE[g.kind] || GATE.config;
+const gateParts = (g) => [...new Set([...g.reads, ...g.checks].map((r) => r.part).filter((id) => parts.has(id)))];
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+let gatesP = null, gatePin = null, emphSaved = null;
+const statesP = new Map();
+
+// Every gate, most important first: checks decide behaviour, so they weigh most, then reach across parts.
+function loadGates() {
+  gatesP ||= !location.protocol.startsWith('http') ? Promise.resolve([])
+    : getJSON('/api/gates').then((j) => (j.gates || []).map((g) => ({ ...g, reads: g.reads || [], checks: g.checks || [], lines: g.lines || [] }))
+      .sort((a, b) => b.checks.length * 3 + gateParts(b).length * 2 + b.reads.length - (a.checks.length * 3 + gateParts(a).length * 2 + a.reads.length) || a.name.localeCompare(b.name)), () => []);
+  return gatesP;
+}
+
+// Light (or with null, un-light) a gate's parts on the map and its metro lines; the emphasis it replaced comes back after.
+function lightGate(g) {
+  if (g) {
+    emphSaved ||= { emph: state.emph, links: state.emphLinks };
+    setEmphasis(gateParts(g)); emphSaved.mine = state.emph; setGateLines(g.lines);
+  } else {
+    if (emphSaved && state.emph === emphSaved.mine) { state.emph = emphSaved.emph; state.emphLinks = emphSaved.links; }
+    emphSaved = null; setGateLines(null);
+  }
+  state.redraw = true;
+}
+
+async function fillGates(pid) {
+  const all = await loadGates(), slot = dbody.querySelector('[data-slot="gates"]');
+  if (!slot) return;
+  const mine = all.filter((g) => gateParts(g).includes(pid));
+  if (!mine.length) return slot.remove();
+  slot.outerHTML = sec('Gates', mine.map((g) => {
+    const [icon, color] = gateLook(g), r = g.reads.filter((x) => x.part === pid).length, c = g.checks.filter((x) => x.part === pid).length, more = gateParts(g).length - 1;
+    return `<div class="item gate" data-gate="${all.indexOf(g)}" tabindex="0" style="--k:${color}"><span class="ii">${icon}</span><div class="t"><b class="mono">${esc(g.name)}</b>${g.default != null ? `<span class="gdef" title="default">= ${esc(g.default)}</span>` : ''}
+      <small>${plural(r, 'read')} · ${plural(c, 'check')}${more > 0 ? ` · also ${plural(more, 'other part')}` : ''}</small></div></div>`;
+  }).join(''), mine.length);
+}
+
+// The card: every read and check of a gate, each opening the code.
+async function openGateCard(g, anchor) {
+  const all = await loadGates(), card = $('#gatecard'), [icon, color, kind] = gateLook(g), name = (id) => parts.get(id)?.name || id || '';
+  const rows = (list, check) => list.map((r) => `<button class="gc-row" data-ref="${esc(r.ref)}" title="${esc(r.ref)}"><span class="gc-fn">${esc(r.fn || '')}</span><span class="gc-pt">${esc(name(r.part))}</span><span class="gc-rf">${esc(fileLine(r.ref))}</span>${check && r.text ? `<code>${esc(r.text)}</code>` : ''}</button>`).join('');
+  card.dataset.gate = all.indexOf(g);
+  card.style.setProperty('--k', color);
+  card.innerHTML = `<div class="gc-hd"><span class="ii">${icon}</span><div class="gc-id"><b>${esc(g.name)}</b><small>${kind}${g.default != null ? ` · default <code>${esc(g.default)}</code>` : ''}</small></div><button class="gc-x" title="Close (Esc)">${I.x}</button></div>
+    <div class="gc-body">${g.checks.length ? `<div class="gc-sh">Checked in <em>${g.checks.length}</em></div>${rows(g.checks, true)}` : ''}
+    ${g.reads.length ? `<div class="gc-sh">Read in <em>${g.reads.length}</em></div>${rows(g.reads, false)}` : ''}
+    ${!g.checks.length && !g.reads.length ? '<p class="gc-ft">No reads or checks found.</p>' : ''}</div>
+    <p class="gc-ft">Lit on the map: ${plural(gateParts(g).length, 'part')}${g.lines.length ? ` · ${plural(g.lines.length, 'metro line')}` : ''}</p>`;
+  card.hidden = false;
+  // beside its anchor: left of the detail panel, else right of the top-left panel
+  const a = anchor.getBoundingClientRect(), w = card.offsetWidth, h = card.offsetHeight;
+  const left = a.left - w - 12 >= 8 ? a.left - w - 12 : Math.min(a.right + 12, innerWidth - w - 8);
+  card.style.left = Math.round(left) + 'px'; card.style.top = Math.round(clamp(a.top - 8, 8, innerHeight - h - 8)) + 'px';
+  card.querySelector('.gc-x').focus({ preventScroll: true });
+}
+
+function closeGateCard() {
+  if ($('#gatecard').hidden) return false;
+  $('#gatecard').hidden = true; gatePin = null; lightGate(null);
+  document.querySelectorAll('[data-gate].on').forEach((el) => el.classList.remove('on'));
+  return true;
+}
+
+async function pinGate(i, anchor) {
+  const g = (await loadGates())[+i]; if (!g) return;
+  if (gatePin === g) return closeGateCard();
+  document.querySelectorAll('[data-gate].on').forEach((el) => el.classList.remove('on'));
+  anchor.classList.add('on');
+  gatePin = g; lightGate(g); openGateCard(g, anchor);
+}
+
+// The system-wide list in the top-left panel, and gates in search.
+async function initGateList() {
+  const all = await loadGates();
+  if (!all.length) return;
+  $('#flowsbtn').insertAdjacentHTML('afterend', '<button id="gatesbtn" class="tag" aria-expanded="false"></button>');
+  $('#sysflows').insertAdjacentHTML('afterend', `<div id="gatelist" hidden>${all.map((g, i) => {
+    const [icon, color] = gateLook(g);
+    return `<button class="gl-row" data-gate="${i}" style="--k:${color}"><span class="gi">${icon}</span><span class="nm">${esc(g.name)}</span><em>${g.checks.length ? plural(g.checks.length, 'check') : plural(g.reads.length, 'read')} · ${plural(gateParts(g).length, 'part')}</em></button>`;
+  }).join('')}</div>`);
+  const btn = $('#gatesbtn'), list = $('#gatelist');
+  const label = () => { btn.innerHTML = `Gates (${all.length}) ${list.hidden ? '▸' : '▾'}`; btn.setAttribute('aria-expanded', !list.hidden); };
+  label();
+  btn.onclick = () => { list.hidden = !list.hidden; label(); if (list.hidden) closeGateCard(); };
+  list.onclick = (e) => { const r = e.target.closest('[data-gate]'); if (r) pinGate(r.dataset.gate, r); };
+  hoverGates(list);
+  all.forEach((g, i) => state.searchItems.push({ ty: 'gate', name: g.name, sub: `${gateLook(g)[2]} · ${plural(g.checks.length, 'check')}, ${plural(g.reads.length, 'read')}`, go: () => {
+    list.hidden = false; label(); const r = list.querySelector(`[data-gate="${i}"]`); r.scrollIntoView({ block: 'nearest' }); if (gatePin !== g) pinGate(i, r);
+  } }));
+}
+
+// Hovering a gate row lights it; leaving goes back to the pinned gate (if any).
+function hoverGates(el) {
+  let cur = null;
+  el.addEventListener('mouseover', async (e) => {
+    const r = e.target.closest('[data-gate]'); if (!r || r === cur) return;
+    cur = r; const g = (await loadGates())[+r.dataset.gate];
+    if (cur === r) lightGate(g);
+  });
+  el.addEventListener('mouseout', (e) => {
+    if (!cur || cur.contains(e.relatedTarget)) return;
+    cur = null; lightGate(gatePin);
+  });
+}
+
+async function fillStates(pid) {
+  if (!statesP.has(pid)) statesP.set(pid, getJSON('/api/states?part=' + encodeURIComponent(pid)).then((j) => j.machines || [], () => []));
+  const machines = (await statesP.get(pid)).filter((m) => m.states?.length && m.transitions?.length >= 2), slot = dbody.querySelector('[data-slot="states"]');
+  if (!slot) return;
+  if (!machines.length) return slot.remove();
+  slot.outerHTML = sec('States', machines.map(machineHtml).join(''), machines.length);
+}
+
+const INFERRED = 'Inferred from the code, not declared: a field named like state, status, phase or stage that is set to constant values in several places. '
+  + 'Each arrow is one of those assignments; its “from” state is guessed from an enclosing if or switch. It can miss or misread transitions.';
+let svgCtx = null;
+
+// One machine as a compact diagram: states as rounded nodes in a row (≤ 3) or around an ellipse, transitions as labelled arrows.
+function machineHtml(m) {
+  svgCtx ||= document.createElement('canvas').getContext('2d');
+  svgCtx.font = '500 11px Inter, sans-serif';
+  const pre = commonPrefix(m.states), short = (s) => s.slice(pre.length) || s, W = 352, NH = 24;
+  const n = m.states.length, room = n <= 3 ? W / n - 10 : 140;   // a node's widest, so neighbours never touch
+  const nodes = m.states.map((s) => { const t = fit(short(s), room - 18); return { s, t, w: Math.ceil(svgCtx.measureText(t).width) + 18 }; });
+  const maxW = Math.max(...nodes.map((x) => x.w));
+  let H;
+  if (n <= 3) { H = 80; nodes.forEach((x, i) => { x.x = (W * (i + 0.5)) / n; x.y = 44; }); }
+  else {
+    const rx = W / 2 - maxW / 2 - 6, ry = clamp(n * 22, 72, 132); H = 2 * ry + NH + 34;
+    nodes.forEach((x, i) => { const a = -Math.PI / 2 + (2 * Math.PI * i) / n; x.x = W / 2 + rx * Math.cos(a); x.y = H / 2 + 4 + ry * Math.sin(a); });
+  }
+  const at = Object.fromEntries(nodes.map((x) => [x.s, x]));
+  // where the segment from a node's centre towards (tx, ty) leaves its box
+  const rim = (x, tx, ty, pad = 3) => { const dx = tx - x.x, dy = ty - x.y, k = 1 / Math.max(Math.abs(dx) / (x.w / 2 + pad), Math.abs(dy) / (NH / 2 + pad), 1e-6); return [x.x + dx * k, x.y + dy * k]; };
+  const groups = new Map();
+  for (const t of m.transitions) { if (!at[t.to] || (t.from != null && !at[t.from])) continue; const k = `${t.from}\u0000${t.to}`; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(t); }
+  const f = (v) => v.toFixed(1), edges = [];
+  for (const list of groups.values()) {
+    const { from, to } = list[0], b = at[to];
+    if (from == null) {   // set from no known state: a short arrow from a dot just above the node
+      const sy = b.y - NH / 2 - 22;
+      edges.push({ list, d: `M${f(b.x)} ${f(sy)}L${f(b.x)} ${f(b.y - NH / 2 - 4)}`, lx: b.x, ly: sy - 6, start: [b.x, sy] });
+      continue;
+    }
+    const a = at[from];
+    let d, lx, ly;
+    if (a === b) {   // self loop above the node
+      const x0 = a.x - 8, x1 = a.x + 8, y0 = a.y - NH / 2;
+      d = `M${f(x0)} ${f(y0)}C${f(x0 - 10)} ${f(y0 - 26)},${f(x1 + 10)} ${f(y0 - 26)},${f(x1)} ${f(y0 - 2)}`; lx = a.x; ly = y0 - 24;
+    } else {
+      // curve to the right of the travel direction, so A→B and B→A never overlap
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1, bend = n <= 3 ? 16 : 18;
+      const qx = mx - (dy / len) * bend, qy = my + (dx / len) * bend;
+      const [sx, sy] = rim(a, qx, qy), [ex, ey] = rim(b, qx, qy, 4);
+      // the label sits just outside the curve, anchored away from it
+      const nx = -dy / len, ny = dx / len;
+      d = `M${f(sx)} ${f(sy)}Q${f(qx)} ${f(qy)} ${f(ex)} ${f(ey)}`; lx = (sx + 2 * qx + ex) / 4 + nx * 6; ly = (sy + 2 * qy + ey) / 4 + ny * 9 + 3;
+      edges.push({ list, d, lx, ly, anchor: nx > 0.45 ? 'start' : nx < -0.45 ? 'end' : 'middle' });
+      continue;
+    }
+    edges.push({ list, d, lx, ly });
+  }
+  // labels: one or two function names (the rest as +n); the view box grows to fit them
+  svgCtx.font = '10px "JetBrains Mono", monospace';
+  for (const e of edges) {
+    const uniq = e.list.filter((t, i) => e.list.findIndex((u) => (u.fn || '?') === (t.fn || '?')) === i), budget = n <= 3 ? W / n - 8 : 170;
+    e.shown = uniq.slice(0, 2);
+    if (svgCtx.measureText(e.shown.map((t) => t.fn || '?').join(', ') + (uniq.length > 2 ? ` +${uniq.length - 2}` : '')).width > budget) e.shown = uniq.slice(0, 1);
+    e.more = uniq.length - e.shown.length;
+    e.names = e.shown.map((t) => fit(t.fn || '?', budget - (e.more ? 26 : 0)));
+    const w = svgCtx.measureText(e.names.join(', ') + (e.more ? ` +${e.more}` : '')).width;
+    e.x0 = e.anchor === 'start' ? e.lx : e.anchor === 'end' ? e.lx - w : e.lx - w / 2; e.x1 = e.x0 + w;
+  }
+  const top = Math.min(0, ...edges.map((e) => e.ly - 12)), x0 = Math.min(0, ...edges.map((e) => e.x0 - 4)), x1 = Math.max(W, ...edges.map((e) => e.x1 + 4));
+  const label = (e) => e.shown.map((t, i) => `${i ? '<tspan>, </tspan>' : ''}<tspan data-ref="${esc(t.ref)}">${esc(e.names[i])}</tspan>`).join('') + (e.more ? `<tspan> +${e.more}</tspan>` : '');
+  const tip = (e) => e.list.map((t) => `${t.from == null ? 'start' : short(t.from)} → ${short(t.to)}: ${t.fn || '?'} (${t.ref})`).join('\n');
+  return `<div class="sm"><div class="sm-hd"><span class="ii" style="--k:var(--lavender)">${I.states}</span><b class="mono">${esc(m.subject ? `${m.subject}.${m.field}` : m.field || m.id)}</b>
+      ${m.heuristic ? `<span class="sm-inf" tabindex="0" title="${esc(INFERRED)}">inferred</span>` : ''}${pre ? `<small class="mono" title="common prefix of the states">${esc(pre)}…</small>` : ''}</div>
+    <svg class="sm-g" viewBox="${f(x0)} ${f(top)} ${f(x1 - x0)} ${f(H - top)}" width="100%" role="img" aria-label="${esc(`${m.field} states: ${m.states.join(', ')}`)}">
+      <defs><marker id="smA" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 .8 7.2 4 0 7.2z"/></marker></defs>
+      ${edges.map((e) => `<g class="sm-e" data-ref="${esc(e.list[0].ref)}"><title>${esc(tip(e))}</title><path class="hit" d="${e.d}"/><path d="${e.d}" marker-end="url(#smA)"/>${e.start ? `<circle cx="${f(e.start[0])}" cy="${f(e.start[1])}" r="3.5"/>` : ''}<text x="${f(e.lx)}" y="${f(e.ly)}"${e.anchor ? ` text-anchor="${e.anchor}"` : ''}>${label(e)}</text></g>`).join('')}
+      ${nodes.map((x) => `<g class="sm-n"><title>${esc(x.s)}</title><rect x="${f(x.x - x.w / 2)}" y="${f(x.y - NH / 2)}" width="${x.w}" height="${NH}" rx="12"/><text x="${f(x.x)}" y="${f(x.y + 4)}">${esc(x.t)}</text></g>`).join('')}
+    </svg></div>`;
+}
+
+// Text cut with an ellipsis to fit w px in svgCtx's current font.
+function fit(t, w) {
+  if (svgCtx.measureText(t).width <= w) return t;
+  while (t.length > 1 && svgCtx.measureText(t + '…').width > w) t = t.slice(0, -1);
+  return t + '…';
+}
+
+// Shared leading words of the state names (to "_" or "."), shown once instead of on every node.
+function commonPrefix(list) {
+  let p = list[0] || '';
+  for (const s of list) while (!s.startsWith(p)) p = p.slice(0, -1);
+  let cut = Math.max(p.lastIndexOf('_'), p.lastIndexOf('.')) + 1;
+  if (!cut) for (let i = p.length; i > 0; i--) if (list.every((s) => /[A-Z]/.test(s[i] || ''))) { cut = i; break; }   // camelCase: JobState|Running
+  return cut > 1 && list.every((s) => s.length > cut) ? p.slice(0, cut) : '';
 }
 
 export function openCode(ref) {
@@ -405,6 +621,7 @@ export function buildSearch() {
   (state.M.systemFlows || []).forEach((f, i) => state.searchItems.push({ ty: 'flow', name: f.title, sub: 'system flow', go: () => playFlow(`system#${i}`) }));
   for (const p of parts.values()) (p.flows || []).forEach((f, i) => state.searchItems.push({ ty: 'flow', name: f.title, sub: `${p.name} · ${f.trigger || ''}`, go: () => playFlow(`${p.id}#${i}`) }));
   for (const n of nodes) if (n.type === 'fn') state.searchItems.push({ ty: 'func', name: n.name, sub: `${n.owner.name} · ${n.owner.flows[n.flow].title}`, go: () => dive(entFromNode(n)) });
+  initGateList();
 }
 
 export function fuzzy(q, s) {
@@ -427,7 +644,7 @@ function resultLook(ty) {
   if (EXT[ty]) return [EXT[ty].icon, EXT[ty].color, EXT[ty].label];
   return {
     group: [I.layers, 'var(--lavender)', 'Group'], systems: [I.globe, 'var(--blue)', 'Systems'], ext: [I.globe, 'var(--blue)', 'External'],
-    flow: [I.flow, 'var(--cyan)', 'Flow'], func: [I.fn, 'var(--cyan)', 'Function'], method: [I.method, 'var(--violet)', 'Method'], type: [I.type, 'var(--green)', 'Type'],
+    flow: [I.flow, 'var(--cyan)', 'Flow'], func: [I.fn, 'var(--cyan)', 'Function'], gate: [I.flag, 'var(--violet)', 'Gate'], method: [I.method, 'var(--violet)', 'Method'], type: [I.type, 'var(--green)', 'Type'],
   }[ty] || [I.code, 'var(--dim)', ty];
 }
 
@@ -535,8 +752,19 @@ export function initDetailPanel() {
   initFlowBar();
   rf = (ref) => ref ? `<span class="rf" data-ref="${esc(ref)}">${esc(ref)}${state.M.code?.[ref]?.verified === false ? ' <span class="unv">⚠</span>' : ''}</span>` : '';
   goLink = (id, text) => `<span class="go" data-go="${esc(id)}">${esc(text ?? id)}</span>`;
+  document.body.insertAdjacentHTML('beforeend', '<div id="gatecard" class="hud glass" role="dialog" aria-label="Gate" hidden></div>');
+  hoverGates(detail);
+  $('#gatecard').addEventListener('click', (e) => {
+    if (e.target.closest('.gc-x')) return closeGateCard();
+    const r = e.target.closest('[data-ref]'); if (r) openCode(r.dataset.ref);
+  });
+  addEventListener('pointerdown', (e) => { if (!e.target.closest('#gatecard,[data-gate],#drawer,#gpop')) closeGateCard(); });
+  // Esc closes the gate card first (before the drawer, the Lens or stepping out)
+  addEventListener('keydown', (e) => { if (e.key === 'Escape' && closeGateCard()) e.stopImmediatePropagation(); }, true);
+  detail.addEventListener('keydown', (e) => { const g = e.target.closest?.('[data-gate]'); if (g && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); pinGate(g.dataset.gate, g); } });
   detail.addEventListener('click', (e) => {
     const t = e.target;
+    const gt = t.closest('[data-gate]'); if (gt) return pinGate(gt.dataset.gate, gt);
     const sh = t.closest('.sh');
     if (sh) { const s = sh.parentElement, c = s.classList.toggle('closed'); closedSecs[c ? 'add' : 'delete'](s.dataset.sec); return; }
     if (t.closest('[data-closecode]')) { codeslot.innerHTML = ''; if (!state.selected) closeDetail(); return; }

@@ -1,9 +1,9 @@
 // board.js
-// Exports: structs, loadStructures, buildStruct, disposeStruct, setFacing, boardNear, usesOf, usersOf, updateStructs, structNodeAt, flyToBoard, openLens, initBoard
-// Imports: state: state | drawer: drawer, getJSON, gpop, overlay | hud: I, detail, openCode, showDetail | scene: G, LineSet, SHAPES, camPos, camera, controls, dive, fly, flyTo, kindOn, meshes, nodeByKey, parts, player, pulseTex, recolor, renderer, scene, solidMats | theme: EXT, PORTS, THEME, kindOf, oklch | util: $, V3, clamp, ease, esc, hashStr, smooth, reducedMotion | voice: cancelSpeech, speak, voice
+// Exports: structs, loadStructures, buildStruct, disposeStruct, setFacing, boardNear, usesOf, usersOf, updateStructs, structNodeAt, flyToBoard, openLens, setGateLines, initBoard
+// Imports: state: state | drawer: drawer, getJSON, gpop, overlay | hud: I, detail, openCode, showDetail | scene: G, LineSet, SHAPES, camPos, camera, controls, dive, fly, flyTo, kindOn, meshes, nodeByKey, parts, player, pulseTex, recolor, renderer, scene, solidMats | theme: EXT, PORTS, THEME, kindOf, oklch | util: $, V3, clamp, ease, esc, hashStr, smooth, reducedMotion | voice: cancelSpeech, speak, voice | xray: mountXray
 // The metro map of a part's code (METRO.md), on an upright board under the part. Each entry point is a coloured line
 // running left to right through its main call path; side calls are short spurs; stations shared by lines are interchanges.
-// Clicking a station opens the Lens: its callers and callees as file cards around it.
+// Clicking a station opens the Lens: its callers and callees as file cards around it, or (X-ray) the function's own flowchart.
 import * as THREE from 'three';
 import { state } from './state.js';
 import { drawer, getJSON, gpop, overlay } from './drawer.js';
@@ -12,13 +12,14 @@ import { G, LineSet, SHAPES, camPos, camera, controls, dive, fly, flyTo, kindOn,
 import { EXT, PORTS, THEME, kindOf, oklch } from './theme.js';
 import { $, V3, clamp, ease, esc, hashStr, smooth, reducedMotion } from './util.js';
 import { cancelSpeech, speak, speakFlow, voice } from './voice.js';
+import { mountXray } from './xray.js';
 
 export let structs;
 // grid: COL world units between columns, ROW between rows; GAP between parallel lines on a shared segment
 const COL = 3.6, ROW = 1.5, GAP = 0.14, MAX_SPURS = 3;
 const LINE_HUES = [250, 75, 150, 25, 300, 195, 350, 110, 225, 50, 275, 170];
 let TXT_W, TXT_H, TXT_FONT, TXT_Q, TXT_CHAR, TXT_DEF, TXT_DIM, textMat, flatMat, zoneMat, WHITE, FILL, tmp, tmpDir;
-let legendS = null, hoverLines = null, lens = null, ride = null, ridePulse = null;
+let legendS = null, hoverLines = null, gateLines = null, lens = null, ride = null, ridePulse = null, xrayOn = false;
 
 const trunc = (t, n) => (t.length > n ? t.slice(0, n - 1) + '…' : t);
 const fullName = (it) => (it.kind === 'method' && it.parent ? `${it.parent}.${it.name}` : it.name);
@@ -416,9 +417,10 @@ export function updateStructs(dt, fp) {
     if (!vis && !S.live) continue;
     S.live = S.depth >= 0.003;
     if (!top || S.depth > top.depth) top = S;
-    // emphasis: the ridden line, else the hovered legend line, else the lines through the hovered station
+    // emphasis: the ridden line, else the hovered legend line, else a gate's lines, else the lines through the hovered station
     const hov = state.hoverEnt?.node?.owner === p && state.hoverEnt.node.item?.placed ? state.hoverEnt.node.item : null;
-    const fl = ride?.S === S ? ride.lines : hoverLines?.[0]?.S === S ? hoverLines : hov?.lines.length ? hov.lines : null;
+    const gl = gateLines?.filter((L) => L.S === S);
+    const fl = ride?.S === S ? ride.lines : hoverLines?.[0]?.S === S ? hoverLines : gl?.length ? gl : hov?.lines.length ? hov.lines : null;
     for (const L of S.lines) {
       const lit = fl && fl.includes(L), t = S.depth * (L.on ? (fl ? (lit ? 1 : 0.1) : 0.85) : 0);
       L.a += (t - L.a) * k; if (Math.abs(t - L.a) < 0.003) L.a = t;
@@ -459,6 +461,12 @@ export function updateStructs(dt, fp) {
   if (ride && (player.on || ride.S !== legendS)) stopRide();
   updateRide(dt);
   if (lens) placeLens();
+}
+
+// Light the metro lines a gate controls ("part:lineId" refs), or none.
+export function setGateLines(refs) {
+  gateLines = refs?.map((r) => { const k = r.lastIndexOf(':'); return parts.get(r.slice(0, k))?.struct?.lines.find((L) => L.id === r.slice(k + 1)); }).filter(Boolean) || null;
+  state.redraw = true;
 }
 
 /* ---------------- line legend ---------------- */
@@ -558,6 +566,21 @@ function closeLens() {
   lens = null; $('#lens').hidden = true; $('#lens').innerHTML = '';
 }
 
+function toggleXray() {
+  if (!lens || lens.trail[lens.trail.length - 1].kind === 'type') return;
+  xrayOn = !xrayOn;
+  renderLens(0);
+}
+
+// A call in the x-ray: re-centre on its callee when it is in this part (one of the function's callees first).
+function xrayCall(n) {
+  const S = lens.S, it = lens.trail[lens.trail.length - 1];
+  const named = (x) => x.node && x.kind !== 'type' && x.name === n.callee;
+  const to = it.callees.map((i) => S.items[i]).find(named) || S.items.find((x) => named(x) && x.file === it.file) || S.items.find(named);
+  if (to) recentre(to, 1);
+  return !!to;
+}
+
 const KIND_LOOK = { function: ['var(--cyan)', 'fn'], method: ['var(--violet)', 'method'], type: ['var(--green)', 'type'] };
 const lineDots = (it) => it.lines.map((L) => `<i class="lz-ln" style="--c:${L.css}" title="${esc(L.label)}"></i>`).join('');
 
@@ -585,25 +608,33 @@ function renderLens(dir) {
   const [kc, kl] = KIND_LOOK[it.kind] || KIND_LOOK.function;
   const types = it.usesT.map((i) => S.items[i]).filter((t, k, a) => a.findIndex((u) => u.name === t.name) === k);   // same-named types read as one chip
   const empty = (txt) => `<div class="lz-empty">${txt}</div>`;
-  el.innerHTML = `<div class="lz-top"><nav class="lz-crumbs"><button data-crumb="-1">${I.layers}${esc(S.part.name)} metro</button>${trail.map((x, k) => `<span class="sep">${I.chevR}</span>${k === trail.length - 1 ? `<span class="cur">${esc(x.name)}</span>` : `<button data-crumb="${k}">${esc(x.name)}</button>`}`).join('')}</nav>
-    <span class="lz-hint"><kbd>esc</kbd> back to metro</span><button class="lz-x" data-lz="close" title="Back to metro (Esc)">${I.x}</button></div>
-    <div class="lz-stage"><svg class="lz-arrows" aria-hidden="true"></svg>
-      <div class="lz-col" data-col="l"><div class="lz-h">${isType ? 'Used by' : 'Called by'} <em>${left.length}</em></div>${left.length ? lensCards(S, left, 'l') : empty(it.outside ? `Called ${it.outside}× from other parts only` : 'Nothing in this part calls it')}</div>
-      <div class="lz-mid"><div class="lz-centre" style="--k:${kc}">
+  const xr = xrayOn && !isType;
+  el.classList.toggle('xray', xr);
+  const centre = xr ? `<div class="lz-centre xr-card" style="--k:${kc}">
+        <div class="xr-hd"><div class="xr-id"><div class="lz-pills"><span class="pill" style="--k:${kc}">${kl}</span>${it.test ? '<span class="pill soft">test</span>' : ''}${lineDots(it)}</div>
+          <h2>${esc(fullName(it)).replace(/([._])/g, '$1<wbr>')}</h2><button class="lz-ref" data-lz="code">${I.file}${esc(it.file.split('/').slice(-2).join('/'))}:${it.line}</button></div>
+          <button class="xr-tog on" data-lz="xray" aria-pressed="true" title="Back to the card (x)">${I.xray}X-ray<kbd>x</kbd></button></div>
+        <div class="xr"></div></div>` : `<div class="lz-centre" style="--k:${kc}">
         <div class="lz-pills"><span class="pill" style="--k:${kc}">${kl}</span>${it.test ? '<span class="pill soft">test</span>' : ''}${lineDots(it)}${it.placed ? '' : '<span class="pill soft">not on a line</span>'}</div>
         <h2>${esc(fullName(it)).replace(/([._])/g, '$1<wbr>')}</h2>
         <button class="lz-ref" data-lz="code">${I.file}${esc(it.file.split('/').slice(-2).join('/'))}:${it.line}</button>
         ${types.length ? `<div class="lz-sh">Uses types</div><div class="lz-chips">${types.map((t) => `<button class="lz-chip" data-i="${t.i}" data-side="r">${I.type}${esc(t.name)}</button>`).join('')}</div>` : ''}
         ${it.effects.length ? `<div class="lz-sh">Touches</div><div class="lz-chips">${it.effects.map((e) => { const x = EXT[e.kind] || EXT.other; return `<button class="lz-chip fx" data-ref="${esc(e.ref)}" style="--k:${x.color}" title="${esc(e.ref)}">${x.icon}${esc(e.target)}</button>`; }).join('')}</div>` : ''}
         ${it.outside && left.length ? `<p class="lz-note">Also called ${it.outside}× from other parts</p>` : ''}
-        <div class="lz-btns"><button class="btn primary" data-lz="code">${I.code}Open code</button>${it.placed ? `<button class="btn" data-lz="map">${I.flow}Show on metro</button>` : ''}</div>
-      </div></div>
+        <div class="lz-btns"><button class="btn primary" data-lz="code">${I.code}Open code</button>${isType ? '' : `<button class="btn" data-lz="xray" title="The function as a flowchart (x)">${I.xray}X-ray</button>`}${it.placed ? `<button class="btn" data-lz="map">${I.flow}Show on metro</button>` : ''}</div>
+      </div>`;
+  el.innerHTML = `<div class="lz-top"><nav class="lz-crumbs"><button data-crumb="-1">${I.layers}${esc(S.part.name)} metro</button>${trail.map((x, k) => `<span class="sep">${I.chevR}</span>${k === trail.length - 1 ? `<span class="cur">${esc(x.name)}</span>` : `<button data-crumb="${k}">${esc(x.name)}</button>`}`).join('')}</nav>
+    <span class="lz-hint"><kbd>esc</kbd> back to metro</span><button class="lz-x" data-lz="close" title="Back to metro (Esc)">${I.x}</button></div>
+    <div class="lz-stage"><svg class="lz-arrows" aria-hidden="true"></svg>
+      <div class="lz-col" data-col="l"><div class="lz-h">${isType ? 'Used by' : 'Called by'} <em>${left.length}</em></div>${left.length ? lensCards(S, left, 'l') : empty(it.outside ? `Called ${it.outside}× from other parts only` : 'Nothing in this part calls it')}</div>
+      <div class="lz-mid">${centre}</div>
       <div class="lz-col" data-col="r"><div class="lz-h">${isType ? 'Methods' : 'Calls'} <em>${right.length}</em></div>${right.length ? lensCards(S, right, 'r') : empty(isType ? 'No methods' : 'Calls nothing in this part')}</div>
     </div>`;
   const stage = el.querySelector('.lz-stage');
   if (dir && !reducedMotion()) stage.animate([{ transform: `translateX(${dir * 56}px)`, opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 380, easing: 'cubic-bezier(.32,.72,0,1)' });
   for (const c of stage.querySelectorAll('.lz-col')) c.addEventListener('scroll', drawArrows, { passive: true });
   placeLens(); requestAnimationFrame(drawArrows);
+  if (xr) mountXray(el.querySelector('.xr'), it, xrayCall);
 }
 
 // One arrow per file card: into the centre from the callers, out of the centre to the callees.
@@ -722,8 +753,14 @@ export function initBoard() {
     if (a === 'close') closeLens();
     else if (a === 'code') openCode(`${it.file}:${it.line}`);
     else if (a === 'map') { closeLens(); flyToStation(S, it); }
+    else if (a === 'xray') toggleXray();
   });
   addEventListener('resize', () => { if (lens) requestAnimationFrame(drawArrows); });
+  // x: the Lens's function as an x-ray flowchart, and back
+  addEventListener('keydown', (e) => {
+    if (!lens || e.key !== 'x' || e.ctrlKey || e.metaKey || e.altKey || e.target.closest?.('input,textarea,select')) return;
+    e.preventDefault(); toggleXray();
+  });
   // Esc: back from the Lens to the metro, or stop a ride (the code drawer and its popover close first)
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || e.target.closest?.('input,textarea,select') || drawer.classList.contains('open') || gpop.classList.contains('open')) return;
