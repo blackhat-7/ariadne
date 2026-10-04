@@ -15,6 +15,7 @@
 <link rel="stylesheet" href="drawer.css">
 <link rel="stylesheet" href="chat.css">
 <link rel="stylesheet" href="review.css">
+<link rel="stylesheet" href="routes.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script type="importmap">
 {"imports":{
@@ -31,7 +32,6 @@
   <div id="title"><span class="dot"></span><span id="tname">Ariadne</span></div>
   <div id="summary"></div>
   <div id="rev" class="tag"></div>
-  <button id="flowsbtn" class="tag"></button>
   <button id="rvbtn" class="tag" hidden>Review a branch…</button>
   <div id="sysflows" hidden></div>
   <div id="crumbs"></div>
@@ -61,6 +61,7 @@
 <div id="detail" class="hud glass"><button id="dclose" title="Close (Esc)">×</button><div id="dscroll"><div id="codeslot"></div><div id="dbody"></div></div></div>
 
 <div id="hover" class="hud glass"></div>
+<div id="routecard" class="hud glass" hidden></div>
 
 <div id="flowbar" class="hud glass corner">
   <div id="fbtop">

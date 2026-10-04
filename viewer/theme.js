@@ -45,6 +45,8 @@ export const THEME = {
   accent: '#5ac8fa', neutral: '#8b93a3', amber: tint(75, 0.12),
   link: '#c9ced8', track: tint(200, 0.08), fnNode: '#5ac8fa', pulse: 0xffffff, trail: 0x5ac8fa, beacon: tint(75, 0.12),
   shadow: 0.6,
+  // System-flow routes (routes.js): calm metro colours, a touch brighter than the domain tints so they read over them.
+  route: [205, 75, 330, 150, 280, 25].map((h) => oklch(0.8, 0.12, h)),
   board: { edge: '#8b93a3', bundle: '#5b6272', dead: '#5b6272', text: '#c9ced8', textSelf: '#f5f7fa', textStub: '#8b93a3' },
   // Voxel look (voxel.js): night. Deep navy sky, a cool moon with soft shadows, dark blue fill, ACES; lit windows,
   // crystals and the cart glow (glow scales emissive voxels) and are the only things bright enough to bloom.
