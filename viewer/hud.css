@@ -5,7 +5,9 @@
 .lb{position:absolute;left:0;top:0;white-space:nowrap;will-change:transform,opacity;pointer-events:none;text-shadow:0 1px 3px var(--black-a55),0 0 1px var(--black)}
 .lb.click{pointer-events:auto;cursor:pointer}
 /* Voxel look: a light sky and bright terrain behind the tags, so plain-text tags get a firmer dark halo */
-body.voxel :is(.lb-cluster b,.lb-cluster i,.lb-ctag,.lb-part b,.lb-ext,.lb-dock,.lb-port,.lb-use,.lb-sdir){text-shadow:0 1px 2px rgba(0,0,0,.75),0 0 8px rgba(0,0,0,.5)}
+body.voxel :is(.lb-cluster b,.lb-cluster i){text-shadow:0 1px 2px rgba(0,0,0,.75),0 0 8px rgba(0,0,0,.5)}
+/* small tags read on a dark frosted pill, like map labels over terrain */
+body.voxel :is(.lb-ctag,.lb-part b,.lb-ext,.lb-dock,.lb-port,.lb-use,.lb-sdir){text-shadow:none;background:rgba(14,17,24,.62);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);padding:1px 7px;border-radius:7px;box-shadow:0 0 0 .5px rgba(255,255,255,.08)}
 .lb.sel{outline:1.5px solid var(--cyan);outline-offset:4px;border-radius:var(--r-md)}
 .lb-cluster{text-align:center}
 .lb-cluster b{display:block;font:600 19px/1.15 var(--sans);letter-spacing:.04em;text-transform:uppercase;color:var(--white);text-shadow:0 1px 10px var(--black-a55),0 0 18px color-mix(in srgb,var(--c) 45%,transparent)}
