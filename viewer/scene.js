@@ -805,15 +805,25 @@ export function isTrackpad(e) {
   state.lastNotch = ay; state.wheelDevice = 'mouse'; return false;
 }
 
+// Zoom about what is under the pointer: a visible node, else the stage floor (where plates and
+// docks sit), else the plane through the orbit pivot. Zooming about the pivot plane alone stalls
+// at the minimum distance while the thing you aim at, often behind that plane, is still far away.
 export function zoomAt(x, y, f) {
-  const d = camPos.distanceTo(controls.target);
-  f = clamp(f, controls.minDistance / d, controls.maxDistance / d);
   ndc.set((x / innerWidth) * 2 - 1, -(y / innerHeight) * 2 + 1);
   ray.setFromCamera(ndc, camera);
-  camera.getWorldDirection(navN);
-  navPlane.setFromNormalAndCoplanarPoint(navN, controls.target);
-  if (!ray.ray.intersectPlane(navPlane, navP)) navP.copy(controls.target);
-  controls.target.sub(navP).multiplyScalar(f).add(navP);   // scale the view about the point under the pointer
+  const hit = ray.intersectObjects(Object.values(meshes).filter((m) => m.material !== shadowMat), false)
+    .find((h) => h.object.userData.list?.[h.instanceId]?.node?.alpha > 0.25);
+  const floor = -ray.ray.origin.y / ray.ray.direction.y;   // the stage floor is y = 0
+  if (hit) navP.copy(hit.point);
+  else if (floor > 0 && floor < camPos.distanceTo(controls.target) * 4) ray.ray.at(floor, navP);
+  else {
+    camera.getWorldDirection(navN);
+    navPlane.setFromNormalAndCoplanarPoint(navN, controls.target);
+    if (!ray.ray.intersectPlane(navPlane, navP)) navP.copy(controls.target);
+  }
+  const d = camPos.distanceTo(navP);
+  f = clamp(f, controls.minDistance / d, controls.maxDistance / camPos.distanceTo(controls.target));
+  controls.target.sub(navP).multiplyScalar(f).add(navP);   // scale the view about that point
   camPos.sub(navP).multiplyScalar(f).add(navP);
 }
 
@@ -959,24 +969,25 @@ export function initShaders() {
     };
     return m;
   };
-  /* Solid nodes: clearcoated physical material, per-instance colour/alpha. Alpha fades toward the background (stays opaque and
-     depth-correct); a colour above 1 marks an active node, which gets an emissive glow (the only solid thing that blooms).
+  /* Solid nodes: clearcoated physical material, per-instance colour/alpha. Faded nodes are truly see-through: fading
+     toward one flat background colour painted them as black shapes over the gradient, lines and plates. A colour above 1
+     marks an active node, which gets an emissive glow (the only solid thing that blooms).
      Modes: 0 still, 1 slow spin, 2 clock tick, 3 packet sliding along x. */
   const solid = (mode) => {
-    const m = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.5, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.08, envMapIntensity: 0.45 });
+    const m = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.5, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.08, envMapIntensity: 0.45, transparent: true });
     const ang = mode === 1 ? 'float sa = uSpin * 0.3 + float(gl_InstanceID) * 1.3;' : mode === 2 ? 'float sa = -floor(uSpin + float(gl_InstanceID) * 0.37) * 0.5236;' : '';
     m.onBeforeCompile = (sh) => {
-      Object.assign(sh.uniforms, { uSpin: spinTime, uBg: { value: bgColor } });
+      Object.assign(sh.uniforms, { uSpin: spinTime });
       sh.vertexShader = sh.vertexShader
         .replace('#include <common>', '#include <common>\nattribute vec3 aColor; attribute float aAlpha; uniform float uSpin; varying vec3 vC; varying float vA;\nmat3 spinY(float a) { float c = cos(a), s = sin(a); return mat3(c, 0., -s, 0., 1., 0., s, 0., c); }')
         .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>\nvC = aColor; vA = aAlpha; ${ang} ${ang ? 'objectNormal = spinY(sa) * objectNormal;' : ''}`)
         .replace('#include <begin_vertex>', `#include <begin_vertex>\n${ang ? 'transformed = spinY(sa) * transformed;' : ''} ${mode === 3 ? 'transformed.x += (fract(uSpin * 0.5 + float(gl_InstanceID) * 0.5) - 0.5) * 2.0;' : ''}`)
         .replace('#include <project_vertex>', '#include <project_vertex>\nif (aAlpha < 0.004) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);');
       sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', '#include <common>\nuniform vec3 uBg; varying vec3 vC; varying float vA;')
+        .replace('#include <common>', '#include <common>\nvarying vec3 vC; varying float vA;')
         .replace('#include <color_fragment>', '#include <color_fragment>\nfloat mx = max(vC.r, max(vC.g, vC.b)), hot = smoothstep(1.05, 1.3, mx); diffuseColor.rgb *= vC / max(mx, 1.0);')
         .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * hot * 0.9;')
-        .replace('#include <dithering_fragment>', '#include <dithering_fragment>\ngl_FragColor.rgb = mix(uBg, gl_FragColor.rgb, sqrt(clamp(vA, 0.0, 1.0)));');
+        .replace('#include <dithering_fragment>', '#include <dithering_fragment>\ngl_FragColor.a *= sqrt(clamp(vA, 0.0, 1.0));');
     };
     m.customProgramCacheKey = () => 'solid' + mode;
     return m;
@@ -998,7 +1009,7 @@ export function initShaders() {
       void main() { float d = 1.0 - smoothstep(0.0, 1.0, length(vUv - 0.5) * 2.0); gl_FragColor = vec4(0.0, 0.0, 0.0, d * sqrt(d) * vA * ${k.toFixed(2)}); }`,
   });
   shadowMat = shadow(THEME.shadow);
-  floorShadowMat = shadow(0.5);
+  floorShadowMat = shadow(0.22);   // stronger reads as a black hole on the dark stage
   // Glass plates: tinted clearcoat, edges get more opaque at grazing angles (cheap fresnel, no transmission).
   glassMat = (color) => {
     const m = new THREE.MeshPhysicalMaterial({ color, roughness: 0.22, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.06, transparent: true, depthWrite: false, opacity: 0.12, envMapIntensity: 0.6 });

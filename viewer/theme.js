@@ -29,7 +29,7 @@ export const THEME = {
   orbit: { color: '#8b93a3', opacity: 0.22 },
   accent: '#5ac8fa', neutral: '#8b93a3', amber: tint(75, 0.12),
   link: '#c9ced8', track: tint(200, 0.08), fnNode: '#5ac8fa', pulse: 0xffffff, trail: 0x5ac8fa, beacon: tint(75, 0.12),
-  shadow: 1.2,
+  shadow: 0.6,
   board: { edge: '#8b93a3', bundle: '#5b6272', dead: '#5b6272', text: '#c9ced8', textSelf: '#f5f7fa', textStub: '#8b93a3' },
 };
 

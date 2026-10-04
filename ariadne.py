@@ -23,8 +23,12 @@ from urllib.parse import parse_qs, urlparse
 
 HERE = Path(__file__).resolve().parent
 SCHEMA = HERE / "SCHEMA.md"
-MARKERS = {"go.mod", "package.json", "pyproject.toml", "setup.py", "Cargo.toml",
-           "pom.xml", "build.gradle", "project.json"}
+MARKERS = {"go.mod", "package.json", "pyproject.toml", "setup.py", "requirements.txt", "Cargo.toml",
+           "pom.xml", "build.gradle", "build.gradle.kts", "project.json", "Gemfile", "composer.json",
+           "CMakeLists.txt", "mix.exs", "pubspec.yaml", "Package.swift", "Dockerfile"}
+MARKER_SUFFIXES = (".csproj", ".sln", ".slnx")
+SOURCE = re.compile(r"\.(go|py|js|jsx|ts|tsx|mjs|rs|java|kt|kts|scala|cs|fs|rb|php|c|cc|cpp|h|hpp|swift|"
+                    r"ex|exs|dart|lua|sh|sql)$")
 IGNORED = {"node_modules", "vendor", "dist", "build", ".venv", ".git", "__pycache__"}
 KINDS = ["service", "job", "library", "tool"]
 PALETTE = ["#38bdf8", "#a78bfa", "#f472b6", "#34d399", "#fbbf24", "#fb7185", "#22d3ee", "#a3e635"]
@@ -195,9 +199,12 @@ def extract_json(text):
 def find_slices(repo, files):
     """Folders that are their own project; a single-project repo is sliced by top-level dirs."""
     projects = {str(Path(f).parent) for f in files
-                if Path(f).name in MARKERS or f.endswith(".csproj")}
-    projects = {"" if p == "." else p for p in projects}
-    projects.discard("")
+                if Path(f).name in MARKERS or f.endswith(MARKER_SUFFIXES)}
+    projects.discard(".")
+    # A project inside another (tests/, src/ of a service) belongs to it; folders with no code
+    # (dashboards, config) are not parts.
+    projects = {p for p in projects if not any(q != p and in_dir(p, q) for q in projects)}
+    projects = {p for p in projects if any(in_dir(f, p) and SOURCE.search(f) for f in files)}
     if projects:
         return sorted(projects)
     return sorted({Path(f).parts[0] for f in files if len(Path(f).parts) > 1

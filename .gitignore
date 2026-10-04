@@ -4,3 +4,4 @@ map.json
 *.parts/
 maps/
 __pycache__/
+tmp/
