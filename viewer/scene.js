@@ -1,6 +1,6 @@
 // scene.js
-// Exports: solidMats, shadowMat, lineRes, spinTime, bgColor, fatLoop, slab, stage, renderer, scene, camera, controls, rt, composer, bloom, uTime, nodeMats, ATLAS, CELL, atlasCv, atlasCtx, atlasCells, LUCIDE, atlasTex, atlasCell, iconMat, lineMat, tubeMat, shellMat, LineSet, curve, parts, clusters, exts, docks, nodes, nodeByKey, meshes, linkSet, trackSet, streams, at, merge, G, SHAPES, AMBER, addNode, shapeOfPart, partScale, build, buildDetail, kindOn, recolor, setEmphasis, dimOf, camPos, updateLOD, fly, fv, flyTo, updateViewOffset, updateFly, flyOverview, flyToEnt, resolveEnt, entFromNode, findEnt, select, labelOf, dive, ray, ndc, pick, entFromEvent, player, MOVE, STEP, pulseTex, pulse, trailGeo, trail, flowById, actorPos, actorKey, playFlow, gotoStep, stopFlow, pv, updatePlayer, isMac, isTrackpad, navPlane, navP, navN, navR, navU, zoomAt, panBy, gestureOpts, initThreeSetup, initShaders, initWorldModel, initState, initLod, initCameraFlight, initPicking, initFlowPlayback, initNavigation
-// Imports: state: state | board: boardNear, flyToBoard, openLens, setFacing, updateStructs | drawer: codeHtml, drawer, openFile | hud: Label, closeDetail, detail, hoverEl, openCode, showDetail | theme: EXT, KINDS, PORTS, THEME, VOXEL, extOf, kindOf | util: $, V3, clamp, ease, esc, hashStr, rng, smooth | voice: cancelSpeech, pauseSpeech, renderVoiceButton, resumeSpeech, speak, stepSpeech, voice | voxel: BOX, CUBE, RING, followSun, setIslandAlpha, setupVoxel, uWorld, voxCart, voxEntries, voxIsland, voxMesh | voxels: cart, externalModel, partModel
+// Exports: LOW, setResolution, solidMats, shadowMat, lineRes, spinTime, bgColor, fatLoop, slab, stage, renderer, scene, camera, controls, rt, composer, bloom, uTime, nodeMats, ATLAS, CELL, atlasCv, atlasCtx, atlasCells, LUCIDE, atlasTex, atlasCell, iconMat, lineMat, tubeMat, shellMat, LineSet, curve, parts, clusters, exts, docks, nodes, nodeByKey, meshes, linkSet, trackSet, streams, at, merge, G, SHAPES, AMBER, addNode, shapeOfPart, partScale, build, buildDetail, kindOn, recolor, setEmphasis, dimOf, camPos, updateLOD, fly, fv, flyTo, updateViewOffset, updateFly, flyOverview, flyToEnt, resolveEnt, entFromNode, findEnt, select, labelOf, dive, ray, ndc, pick, entFromEvent, player, MOVE, STEP, pulseTex, pulse, trailGeo, trail, flowById, actorPos, actorKey, playFlow, gotoStep, stopFlow, pv, updatePlayer, isMac, isTrackpad, navPlane, navP, navN, navR, navU, zoomAt, panBy, gestureOpts, initThreeSetup, initShaders, initWorldModel, initState, initLod, initCameraFlight, initPicking, initFlowPlayback, initNavigation
+// Imports: state: state | board: boardNear, flyToBoard, openLens, setFacing, updateStructs | drawer: codeHtml, drawer, openFile | hud: Label, closeDetail, detail, hoverEl, openCode, showDetail | theme: EXT, KINDS, PORTS, QUALITY, THEME, VOXEL, extOf, kindOf | util: $, V3, clamp, ease, esc, hashStr, rng, smooth | voice: cancelSpeech, pauseSpeech, renderVoiceButton, resumeSpeech, speak, stepSpeech, voice | voxel: BOX, CUBE, RING, followSun, refreshShadows, setVoxAlpha, setVoxHot, setupVoxel, uWorld, voxCart, voxIsland, voxMesh, voxNode | voxels: cart, externalModel, partModel
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -17,13 +17,13 @@ import { state } from './state.js';
 import { boardNear, flyToBoard, openLens, setFacing, updateStructs } from './board.js';
 import { codeHtml, drawer, openFile } from './drawer.js';
 import { Label, closeDetail, detail, hoverEl, openCode, showDetail } from './hud.js';
-import { EXT, KINDS, PORTS, THEME, VOXEL, extOf, kindOf, mute } from './theme.js';
+import { EXT, KINDS, PORTS, QUALITY, THEME, VOXEL, extOf, kindOf, mute } from './theme.js';
 import { $, V3, clamp, ease, esc, hashStr, reducedMotion, rng, smooth, spring } from './util.js';
 import { cancelSpeech, pauseSpeech, renderVoiceButton, resumeSpeech, speak, speakFlow, stepSpeech, voice } from './voice.js';
-import { BOX, CUBE, RING, followSun, setIslandAlpha, setupVoxel, uWorld, voxCart, voxEntries, voxIsland, voxMesh } from './voxel.js';
+import { BOX, CUBE, RING, followSun, refreshShadows, setVoxAlpha, setVoxHot, setupVoxel, uWorld, voxCart, voxIsland, voxMesh, voxNode } from './voxel.js';
 import { cart, externalModel, partModel } from './voxels.js';
 
-export let stage, renderer, scene, camera, controls, rt, composer, bloom, uTime, nodeMats, ATLAS, CELL, atlasCv, atlasCtx, atlasCells, LUCIDE, atlasTex, iconMat, lineMat, tubeMat, shellMat, parts, clusters, exts, docks, nodes, nodeByKey, meshes, linkSet, trackSet, streams, at, merge, G, SHAPES, AMBER, shapeOfPart, partScale, kindOn, dimOf, camPos, fly, fv, flyOverview, ray, ndc, player, MOVE, STEP, pulseTex, pulse, trailGeo, trail, pv, isMac, navPlane, navP, navN, navR, navU, gestureOpts, solidMats, shadowMat, lineRes, spinTime, bgColor;
+export let LOW, stage, renderer, scene, camera, controls, rt, composer, bloom, uTime, nodeMats, ATLAS, CELL, atlasCv, atlasCtx, atlasCells, LUCIDE, atlasTex, iconMat, lineMat, tubeMat, shellMat, parts, clusters, exts, docks, nodes, nodeByKey, meshes, linkSet, trackSet, streams, at, merge, G, SHAPES, AMBER, shapeOfPart, partScale, kindOn, dimOf, camPos, fly, fv, flyOverview, ray, ndc, player, MOVE, STEP, pulseTex, pulse, trailGeo, trail, pv, isMac, navPlane, navP, navN, navR, navU, gestureOpts, solidMats, shadowMat, lineRes, spinTime, bgColor;
 let glassMat, floorShadowMat, floorShadowGeo;
 
 export function atlasCell(name) {
@@ -42,12 +42,12 @@ export function atlasCell(name) {
     g.fillText(name, CELL / 2, CELL / 2 + 3);
   }
   g.restore();
-  atlasCells.set(name, i); atlasTex.needsUpdate = true; return i;
+  atlasCells.set(name, i); atlasTex.needsUpdate = state.redraw = true; return i;
 }
 
 /* ---------------- line set (one fat-line geometry, many polylines; per-segment alpha and pulse) ---------------- */
 export class LineSet {
-  constructor(speed, spacing, base) { this.pos = []; this.d = []; this.col = []; this.items = []; this.mat = lineMat(speed, spacing, base); }
+  constructor(speed, spacing, base) { this.pos = []; this.d = []; this.col = []; this.items = []; this.hot = 0; this.mat = lineMat(speed, spacing, base); }
   add(points, color, owner) {
     const start = this.pos.length / 6; let acc = 0;
     for (let i = 0; i < points.length - 1; i++) {
@@ -69,12 +69,16 @@ export class LineSet {
   }
   setAlpha(it, a, pulse = 0) {
     a = Math.round(a * 200) / 200;
+    this.hot -= it.pulse > 0 && it.alpha > 0;
+    this.hot += pulse > 0 && a > 0;
     if (a !== it.alpha) { it.alpha = a; this.alphaAttr.array.fill(a, it.start, it.start + it.count); this.dirty = true; }
     if (pulse !== it.pulse) { it.pulse = pulse; this.pulseAttr.array.fill(pulse, it.start, it.start + it.count); this.pdirty = true; }
   }
+  // Upload what changed; visible pulses run every frame.
   flush() {
-    if (this.dirty) { this.alphaAttr.needsUpdate = true; this.dirty = false; }
-    if (this.pdirty) { this.pulseAttr.needsUpdate = true; this.pdirty = false; }
+    if (this.dirty) { this.alphaAttr.needsUpdate = true; this.dirty = false; state.redraw = true; }
+    if (this.pdirty) { this.pulseAttr.needsUpdate = true; this.pdirty = false; state.redraw = true; }
+    if (this.hot) state.redraw = true;
   }
 }
 
@@ -315,17 +319,19 @@ export function build() {
   const groups = {};
   const put = (geo, mode, e) => (groups[geo + '|' + mode] ||= []).push(e);
   if (VOXEL) {
-    // every voxel of every node is one instance of a unit cube, grouped by animation mode
+    // each node's model is one baked mesh; only its moving voxels (clock faces, crates) are instanced, grouped by mode
     const model = (n) => n.type === 'part' ? partModel(kindOf(n.part), hashStr(n.key), n.part.clusterObj.color, { size: n.part.size })
       : n.type === 'external' ? externalModel(extOf(n.ext), hashStr(n.key), EXT[extOf(n.ext)].color, { name: n.ext.name || n.ext.id }) : CUBE;
+    const baked = (k, mesh, e) => { Object.assign(mesh.userData, { baked: true, list: [e] }); meshes[k] = mesh; scene.add(mesh); };
     for (const n of nodes) {
       if (n.type === 'dock') continue;   // docks are islands
-      const m = model(n), cube = m === CUBE, list = voxEntries(m, n.scale, cube, cube ? n.base : null, n.type === 'part' ? 3.6 : 2.4);
-      for (const v of list) put('vox', v.mode, { node: n, ...v });
+      const m = model(n), cube = m === CUBE, v = voxNode(m, n.scale, cube, cube ? n.base : null, n.type === 'part' ? 3.6 : 2.4, n.pos);
+      baked('n:' + n.key, v.mesh, { node: n });
+      for (const e of v.moving) put('vox', e.mode, { node: n, ...e });
       // tall buildings (big services) rise above the usual label height: lift the label onto the roof
-      if (n.type === 'part') n.part.label.pos.y = Math.max(n.part.label.pos.y, n.pos.y + Math.max(...list.map((v) => v.off.y + v.scale)));
+      if (n.type === 'part') n.part.label.pos.y = Math.max(n.part.label.pos.y, n.pos.y + v.top);
     }
-    for (const p of parts.values()) if (state.M.changes?.[p.id]) for (const v of voxEntries(RING, p.r, false, AMBER)) put('vox', 0, { node: p.node, gate: 'chg', ...v });
+    for (const p of parts.values()) if (state.M.changes?.[p.id]) baked('c:' + p.id, voxNode(RING, p.r, false, AMBER, 2.4, p.pos).mesh, { node: p.node, gate: 'chg' });
   } else {
     for (const n of nodes) for (const [geo, mode, gate] of SHAPES[n.shape]) put(geo, mode, { node: n, scale: n.scale, gate });
     for (const p of parts.values()) if (state.M.changes?.[p.id]) put('chg', 0, { node: p.node, scale: p.r * 1.8, gate: 'chg', color: AMBER, y: -p.r * 1.1 });
@@ -337,7 +343,7 @@ export function build() {
     const geo = (g === 'vox' ? BOX : G[g]).clone();
     const mesh = g === 'vox' ? voxMesh(geo, +mode, list.length) : new THREE.InstancedMesh(geo, mode === '4' ? shadowMat : solidMats[+mode], list.length);
     const col = new THREE.InstancedBufferAttribute(new Float32Array(list.length * 3), 3);
-    const al = new THREE.InstancedBufferAttribute(new Float32Array(list.length), 1); al.setUsage(THREE.DynamicDrawUsage);
+    const al = new THREE.InstancedBufferAttribute(new Float32Array(list.length).fill(-1), 1); al.setUsage(THREE.DynamicDrawUsage);
     geo.setAttribute('aColor', col); geo.setAttribute('aAlpha', al);
     if (g === 'vox' && mode === '3') geo.setAttribute('aOff', new THREE.InstancedBufferAttribute(new Float32Array(list.flatMap((e) => e.aOff)), 4));   // crates
     list.forEach((e, i) => { pv.copy(e.node.pos); pv.y += e.y || 0; if (e.off) pv.add(e.off); m4.compose(pv, q, sc.setScalar(e.scale)); mesh.setMatrixAt(i, m4); });
@@ -441,17 +447,27 @@ export function buildDetail(p) {
 
 // Active (flow step) and selected nodes are lit. Solid materials read a colour above 1 as "glow" (the only thing that blooms).
 export function recolor() {
-  const c = new THREE.Color(), sel = state.selected?.node;
+  const c = new THREE.Color(), sel = state.selected?.node, lit = (e) => state.activeKeys.has(e.node.key) || (e.node === sel && e.gate !== 'chg');
   for (const mesh of Object.values(meshes)) {
+    if (mesh.userData.baked) { setVoxHot(mesh, lit(mesh.userData.list[0])); continue; }
     const arr = mesh.userData.color.array, hot = mesh.material.userData.hot || (mesh.material.isMeshPhysicalMaterial ? 4 : 1.7);
     mesh.userData.list.forEach((e, i) => {
-      const n = e.node;
-      c.copy(e.color || n.base);
-      if (state.activeKeys.has(n.key) || (n === sel && e.gate !== 'chg')) c.multiplyScalar(hot);
+      c.copy(e.color || e.node.base);
+      if (lit(e)) c.multiplyScalar(hot);
       arr[i * 3] = c.r; arr[i * 3 + 1] = c.g; arr[i * 3 + 2] = c.b;
     });
     mesh.userData.color.needsUpdate = true;
   }
+  state.redraw = true;
+}
+
+// A mesh entry's alpha: its node's, gated ("changed" ring, packets on hot externals).
+const alphaOf = (e) => e.node.alpha * (!e.gate ? 1 : e.gate === 'chg' ? (state.showChanges ? 1.2 : 0) : e.node.hot ? 1 : 0);
+
+// Set o[k] = v; a change means the view must be drawn again.
+function set(o, k, v) {
+  if (o[k] === v) return false;
+  o[k] = v; state.redraw = true; return true;
 }
 
 export function setEmphasis(ids, linkFilter) {
@@ -473,10 +489,10 @@ export function updateLOD(dt) {
     const dim = state.emph ? (state.emph.has(c.id) || c.parts.some((p) => state.emph.has(p.id)) ? 1 : 0.3) : 1;
     const sd = 1 - 0.92 * (state.focusPart?.struct?.depth || 0);   // everything steps back while a call board is open
     c.plateAlpha = dim;
-    if (VOXEL) setIslandAlpha(c.shell, dim);   // the call board's step back is uWorld, below
+    if (VOXEL) setVoxAlpha(c.shell, dim) && (state.redraw = true);   // the call board's step back is uWorld, below
     else {
-      c.fillMat.opacity = (0.035 + 0.04 * (1 - c.open)) * dim * sd; c.edgeMat.opacity = (0.55 - 0.25 * c.open) * dim * sd;
-      c.ringMat.opacity = (0.06 + 0.22 * c.open) * dim * sd;
+      set(c.fillMat, 'opacity', (0.035 + 0.04 * (1 - c.open)) * dim * sd); set(c.edgeMat, 'opacity', (0.55 - 0.25 * c.open) * dim * sd);
+      set(c.ringMat, 'opacity', (0.06 + 0.22 * c.open) * dim * sd);
     }
     c.label.want = (1 - smooth(0.25, 0.7, c.open)) * dim * (1 - smooth(state.Rext * 4, state.Rext * 6, d)) * sd;
     c.tag.want = smooth(0.45, 0.85, c.open) * dim * sd;
@@ -504,7 +520,7 @@ export function updateLOD(dt) {
     const d = camPos.distanceTo(p.pos);
     const want = p === fp ? 1 - smooth(p.focusDist * 1.15, p.focusDist * 1.9, d) : 0;
     p.unfold = (p.unfold || 0) + (want - (p.unfold || 0)) * Math.min(1, dt * 5);
-    if (p.unfold < 0.002) p.unfold = 0;
+    if (Math.abs(want - p.unfold) < 0.002) p.unfold = want;   // settle, so an idle view stops changing
     p.dist = d;
   }
   const fpU = fp ? fp.unfold : 0, fpD = fp?.struct?.depth || 0;   // fpD: how far into the code-structure level we are
@@ -529,7 +545,12 @@ export function updateLOD(dt) {
         n.label.want = u * (1 - smooth(Math.max(32, p.focusDist * 1.1), Math.max(50, p.focusDist * 1.6), dn));
         n.label.boost = state.activeKeys.has(n.key) ? 60 : 0;
         if (n.tether) trackSet.setAlpha(n.tether, u * 0.22);
-        if (n.code) { n.code.want = u * (1 - smooth(8.5, 12.5, dn)); n.code.boost = Math.max(0, 12.5 - dn) * 9 + (state.activeKeys.has(n.key) ? 40 : 0); }
+        if (n.code) {
+          // Fully visible when you point at the step (or select it); otherwise it fades in as you get close.
+          const pointed = state.hoverEnt?.node === n || state.selected?.node === n;
+          n.code.want = pointed ? u : u * (1 - smooth(10, 14, dn));
+          n.code.boost = (pointed ? 80 : Math.max(0, 14 - dn) * 9) + (state.activeKeys.has(n.key) ? 40 : 0);
+        }
       } else { n.label.want = 0; if (n.tether) trackSet.setAlpha(n.tether, 0); if (n.code) n.code.want = 0; }
     }
     for (const fi of p.flowInfo) {
@@ -542,7 +563,7 @@ export function updateLOD(dt) {
     d.near = 1 - smooth(d.r * 2.6 + 25, d.r * 4 + 60, dd);
     const dim = state.emph ? (d.members.some((e) => state.emph.has(e.id)) ? 1 : 0.3) : 1;
     d.node.alpha = 0.5 * dim;
-    if (d.island) setIslandAlpha(d.island, dim);
+    if (d.island && setVoxAlpha(d.island, dim)) state.redraw = true;
     d.label.want = (1 - d.near) * dim * (1 - 0.6 * fpU) * (1 - fpD);
   }
   for (const e of exts.values()) {
@@ -574,30 +595,32 @@ export function updateLOD(dt) {
     let al = (s.toExt ? 0.3 : 0.55) * (1 - Math.max(oa, ob));
     const hot = state.emphLinks ? s.hows.some((L) => state.emphLinks.has(L)) : false;
     if (state.emph) al *= hot ? 1.6 : 0.12;
-    s.mesh.material.uniforms.uAlpha.value = al * (1 - fpD);
-    s.mesh.material.uniforms.uPulse.value = hot ? 1 : 0;
+    const u = s.mesh.material.uniforms;
+    set(u.uAlpha, 'value', al * (1 - fpD)); set(u.uPulse, 'value', hot ? 1 : 0);
+    if (hot && u.uAlpha.value > 0.004) state.redraw = true;   // the pulse runs
   }
+  // per-instance alpha: upload only what changed
   for (const mesh of Object.values(meshes)) {
     if (mesh.material.uniforms?.uRows) continue;   // board text sets its own alpha
+    if (mesh.userData.baked) { if (setVoxAlpha(mesh, alphaOf(mesh.userData.list[0]))) state.redraw = true; continue; }
     const arr = mesh.userData.alpha.array, list = mesh.userData.list;
-    for (let i = 0; i < list.length; i++) {
-      const e = list[i], g = e.gate;
-      arr[i] = e.node.alpha * (!g ? 1 : g === 'chg' ? (state.showChanges ? 1.2 : 0) : e.node.hot ? 1 : 0);
-    }
-    mesh.userData.alpha.needsUpdate = true;
+    let changed = false;
+    for (let i = 0; i < list.length; i++) { const a = Math.fround(alphaOf(list[i])); if (arr[i] !== a) { arr[i] = a; changed = true; } }
+    if (changed) { mesh.userData.alpha.needsUpdate = true; state.redraw = true; }
   }
   if (state.iconMesh) {
     const arr = state.iconMesh.userData.alpha.array, list = state.iconMesh.userData.list;
-    for (let i = 0; i < list.length; i++) arr[i] = Math.min(1, list[i].node.alpha * 1.4);
-    state.iconMesh.userData.alpha.needsUpdate = true;
+    let changed = false;
+    for (let i = 0; i < list.length; i++) { const a = Math.fround(Math.min(1, list[i].node.alpha * 1.4)); if (arr[i] !== a) { arr[i] = a; changed = true; } }
+    if (changed) { state.iconMesh.userData.alpha.needsUpdate = true; state.redraw = true; }
   }
   updateStructs(dt, fp);
   linkSet.flush(); trackSet.flush();
   if (VOXEL) {
     // solid voxels would hide a call board inside the island: the world dissolves as the board comes up,
     // and the sky dims so the board reads on the dark backdrop it was designed for
-    uWorld.value = 1 - fpD;
-    scene.backgroundIntensity = 1 - 0.9 * fpD;
+    if (set(uWorld, 'value', 1 - fpD)) refreshShadows();
+    set(scene, 'backgroundIntensity', 1 - 0.9 * fpD);
     followSun(tgt, camD);
   }
 }
@@ -624,6 +647,7 @@ export function updateViewOffset(dt) {
   const dw = drawer.classList.contains('open') ? drawer.offsetWidth : detail.classList.contains('open') ? detail.offsetWidth + 16 : 0;
   const want = innerWidth > 900 ? dw / 2 : 0;
   if (Math.abs(want - state.viewOff) < 0.5 && state.viewOff === camera.view?.offsetX) return;
+  state.redraw = true;
   state.viewOff += (want - state.viewOff) * Math.min(1, dt * 6);
   if (Math.abs(want - state.viewOff) < 0.5) state.viewOff = want;
   camera.setViewOffset(innerWidth, innerHeight, state.viewOff, 0, innerWidth, innerHeight);
@@ -717,7 +741,7 @@ export function pick(x, y) {
   ndc.set((x / innerWidth) * 2 - 1, -(y / innerHeight) * 2 + 1);
   ray.setFromCamera(ndc, camera);
   const hits = ray.intersectObjects(Object.values(meshes).filter((m) => m.material !== solidMats[3] && m.material !== shadowMat), false);
-  for (const h of hits) { const n = h.object.userData.list[h.instanceId]?.node; if (n && n.alpha > 0.25) return entFromNode(n); }
+  for (const h of hits) { const n = h.object.userData.list[h.instanceId ?? 0]?.node; if (n && n.alpha > 0.25) return entFromNode(n); }
   let best = null, bd = 1e9;
   for (const c of clusters.values()) {
     if (!c.shell || c.plateAlpha < 0.2 || c.open > 0.6) continue;
@@ -824,6 +848,7 @@ export function stopFlow() {
 
 export function updatePlayer(dt) {
   if (!player.on) return;
+  state.redraw = true;   // the cart and trail move
   if (player.playing) player.t += dt * player.speed;
   const u = ease(clamp((player.t - 0.25) / MOVE, 0, 1));
   pv.lerpVectors(player.a, player.b, u);
@@ -854,7 +879,7 @@ export function zoomAt(x, y, f) {
   ndc.set((x / innerWidth) * 2 - 1, -(y / innerHeight) * 2 + 1);
   ray.setFromCamera(ndc, camera);
   const hit = ray.intersectObjects(Object.values(meshes).filter((m) => m.material !== shadowMat), false)
-    .find((h) => h.object.userData.list?.[h.instanceId]?.node?.alpha > 0.25);
+    .find((h) => h.object.userData.list?.[h.instanceId ?? 0]?.node?.alpha > 0.25);
   const floor = -ray.ray.origin.y / ray.ray.direction.y;   // the stage floor is y = 0
   if (hit) navP.copy(hit.point);
   else if (floor > 0 && floor < camPos.distanceTo(controls.target) * 4) ray.ray.at(floor, navP);
@@ -880,7 +905,10 @@ export function initThreeSetup() {
   /* ---------------- three setup ---------------- */
   stage = $('#stage');
   renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });   // MSAA for the overlay pass; the composer has its own
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  // Low quality: no shadows, pixel ratio at most 1. Auto picks Low for integrated Intel, base M1 and mobile/software GPUs.
+  const gl = renderer.getContext(), dbg = gl.getExtension('WEBGL_debug_renderer_info'), gpu = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : '';
+  LOW = QUALITY === 'low' || (QUALITY === 'auto' && /Intel(?!.*\bArc\b)|Apple M1(?! (Pro|Max|Ultra))|Mali|Adreno|PowerVR|SwiftShader|llvmpipe/i.test(gpu));
+  renderer.setPixelRatio(Math.min(devicePixelRatio, LOW ? 1 : 2));
   renderer.setSize(innerWidth, innerHeight);
   renderer.setClearColor(0x000000, 1);
   stage.prepend(renderer.domElement);
@@ -910,15 +938,24 @@ export function initThreeSetup() {
   controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
   rt = new THREE.WebGLRenderTarget(innerWidth, innerHeight, { type: THREE.HalfFloatType, samples: 4 });
   composer = new EffectComposer(renderer, rt);
-  composer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  composer.setPixelRatio(renderer.getPixelRatio());
   composer.addPass(new RenderPass(scene, camera));
   bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), THEME.bloom.strength, THEME.bloom.radius, THEME.bloom.threshold);
+  const bloomSize = bloom.setSize.bind(bloom);
+  bloom.setSize = (w, h) => bloomSize(Math.round(w / 2), Math.round(h / 2));   // half resolution: it is a blur anyway
   composer.addPass(bloom);
   composer.addPass(new OutputPass());
   uTime = { value: 0 };
   spinTime = { value: 0 };   // decorative spin; frozen under prefers-reduced-motion
   lineRes = new THREE.Vector2(innerWidth, innerHeight);
-  if (VOXEL) setupVoxel({ renderer, scene, camera, composer, bloom, spinTime, skyTexture: sky });
+  if (VOXEL) setupVoxel({ renderer, scene, bloom, spinTime, skyTexture: sky, low: LOW });
+}
+
+// Render size: the window at pixel ratio pr (main.js adapts pr to the frame time).
+export function setResolution(pr = renderer.getPixelRatio()) {
+  renderer.setPixelRatio(pr); renderer.setSize(innerWidth, innerHeight);
+  composer.setPixelRatio(pr); composer.setSize(innerWidth, innerHeight);
+  state.redraw = true;
 }
 
 export function initShaders() {

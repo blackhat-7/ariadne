@@ -153,6 +153,7 @@ export function updateBeacon(dt) {
   b.t += dt;
   const u = clamp(b.t / 0.9, 0, 1);
   ripple.visible = u < 1;
+  if (u < 1) state.redraw = true;
   ripple.scale.setScalar(b.size * (1 + 1.6 * ease(u))); rippleMat.opacity = 0.35 * (1 - u);
 }
 
@@ -185,7 +186,7 @@ export function showCodeLink(force) {
   const at = node ? node.pos : focusPartObj ? focusPartObj.pos : m ? (parts.get(m.st.to) || exts.get(m.st.to) || parts.get(m.st.from) || exts.get(m.st.from))?.pos : null;
   // skip the ring when the node is already visibly selected; the node highlight is enough
   const isSel = node && state.selected && (state.selected.key === node.key || state.selected.id === node.key);
-  beacon.visible = !!at && !isSel;
+  beacon.visible = !!at && !isSel; state.redraw = true;
   if (at) {
     const b = beacon.userData;
     if (b.at !== at) b.t = 0;                                         // new target: one ripple
@@ -231,7 +232,7 @@ export function showCodeLink(force) {
 export function clearCodeLink() {
   clearTimeout(state.linkTimer);
   if (!state.codeLink) return;
-  state.codeLink = null; beacon.visible = false; $('#dctx').innerHTML = '';
+  state.codeLink = null; beacon.visible = false; state.redraw = true; $('#dctx').innerHTML = '';
   if (!player.on) { state.activeKeys = new Set(); recolor(); if (state.selected) select(resolveEnt(state.selected)); else setEmphasis(null); }
 }
 

@@ -55,7 +55,7 @@ export class Label {
     if (opts.style) this.el.style.cssText = opts.style;
     this.pos = pos; this.prio = prio; this.mode = opts.mode || 'above'; this.dy = opts.dy ?? 6;
     this.want = 0; this.cur = 0; this.w = 0; this.h = 0; this.x0 = 0; this.y0 = 0; this.ok = false; this.boost = 0;
-    this.attached = false; this.shown = false; this.pe = false; this.ent = opts.ent || null;
+    this.attached = false; this.shown = false; this.pe = false; this.sx = this.sy = this.so = NaN; this.ent = opts.ent || null;
     if (this.ent) { this.el.classList.add('click'); this.el._ent = this.ent; }
     labels.push(this);
   }
@@ -98,8 +98,10 @@ export function updateLabels(dt) {
     L.cur += (target - L.cur) * k;
     if (L.cur < 0.02 && target === 0) { if (L.shown) { L.el.style.display = 'none'; L.shown = false; } continue; }
     if (!L.shown) { L.el.style.display = ''; L.shown = true; }
-    L.el.style.transform = `translate3d(${Math.round(L.x0)}px,${Math.round(L.y0)}px,0)`;
-    L.el.style.opacity = L.cur.toFixed(2);
+    // write styles only when they change: an idle view costs no style recalculation
+    const x = Math.round(L.x0), y = Math.round(L.y0), o = Math.round(L.cur * 100);
+    if (x !== L.sx || y !== L.sy) { L.sx = x; L.sy = y; L.el.style.transform = `translate3d(${x}px,${y}px,0)`; }
+    if (o !== L.so) { L.so = o; L.el.style.opacity = o / 100; }
     const pe = L.cur > 0.4;
     if (pe !== L.pe) { L.pe = pe; L.el.style.pointerEvents = pe ? '' : 'none'; }
   }

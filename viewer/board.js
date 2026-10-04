@@ -286,7 +286,7 @@ export function disposeStruct(S) {
 // pivotX (board-local): that column stays where it is in the world, so turning never moves the board away from where you look.
 export function setFacing(S, az, pivotX) {
   if (pivotX !== undefined) { const before = S.group.localToWorld(new V3(pivotX, 0, 0)); S.group.rotation.y = az; S.group.updateMatrixWorld(true); S.group.position.add(before.sub(S.group.localToWorld(new V3(pivotX, 0, 0)))); }
-  S.facing = az; S.group.rotation.y = az; S.group.updateMatrixWorld(true);
+  S.facing = az; S.group.rotation.y = az; S.group.updateMatrixWorld(true); state.redraw = true;
   S.textGroup.position.copy(S.group.position); S.textGroup.rotation.copy(S.group.rotation); S.textGroup.updateMatrixWorld(true);
   for (const it of S.items) if (it.node) it.pos.copy(it.placed ? it.local : tmp.set(0, (S.top + S.bottom) / 2, 0)).applyMatrix4(S.group.matrixWorld);
 }
@@ -410,7 +410,10 @@ export function updateStructs(dt, fp) {
     const level = 1 - smooth(0.45, 0.7, Math.asin(clamp(-tmpDir.y, -1, 1)));
     const want = (p === fp || lens?.S === S) && kindOn[kindOf(p)] && l.z > 0 ? Math.max(1 - smooth(S.near, S.near * 1.3, dBoard), level * (1 - smooth(S.lo, S.hi_, dBoard))) : 0;
     S.depth += (want - S.depth) * Math.min(1, dt * 5);
-    if (S.depth < 0.003 && !S.live) continue;
+    if (Math.abs(want - S.depth) < 0.002) S.depth = want;   // settle, so an idle view stops changing
+    const vis = S.depth >= 0.003;   // a hidden board is not drawn at all
+    if (S.group.visible !== vis) { S.group.visible = vis; state.redraw = true; }
+    if (!vis && !S.live) continue;
     S.live = S.depth >= 0.003;
     if (!top || S.depth > top.depth) top = S;
     // emphasis: the ridden line, else the hovered legend line, else the lines through the hovered station
@@ -418,7 +421,7 @@ export function updateStructs(dt, fp) {
     const fl = ride?.S === S ? ride.lines : hoverLines?.[0]?.S === S ? hoverLines : hov?.lines.length ? hov.lines : null;
     for (const L of S.lines) {
       const lit = fl && fl.includes(L), t = S.depth * (L.on ? (fl ? (lit ? 1 : 0.1) : 0.85) : 0);
-      L.a += (t - L.a) * k; if (L.a < 0.003) L.a = 0;
+      L.a += (t - L.a) * k; if (Math.abs(t - L.a) < 0.003) L.a = t;
       for (const x of L.items) S.trunkSet.setAlpha(x, L.a, lit ? 1 : 0);
       for (const x of L.spurItems) S.spurSet.setAlpha(x, L.a * 0.75, 0);
     }
@@ -426,22 +429,27 @@ export function updateStructs(dt, fp) {
     for (const it of S.placed) {
       const on = it.lines.some((L) => L.on), lit = !fl || it === hov || it.lines.some((L) => fl.includes(L));
       const t = S.depth * (on ? (lit ? 1 : 0.15) : 0);
-      it.node.alpha += (t - it.node.alpha) * k; if (it.node.alpha < 0.003) it.node.alpha = 0;
+      it.node.alpha += (t - it.node.alpha) * k; if (Math.abs(t - it.node.alpha) < 0.003) it.node.alpha = t;
       it.dn = camPos.distanceTo(it.pos);
     }
-    S.zoneMat.uniforms.uA.value = S.depth * (fl ? 0.55 : 1);
+    const za = S.zoneMat.uniforms.uA, zv = S.depth * (fl ? 0.55 : 1);
+    if (za.value !== zv) { za.value = zv; state.redraw = true; }
     if (S.depth > 0.01 && !S.text) buildBoardText(S);
     if (S.text) {
       const arr = S.text.mesh.userData.alpha.array, list = S.text.list;
+      let changed = false;
       for (let i = 0; i < list.length; i++) {
         const e = list[i];
+        let v;
         if (e.it) {
           const a = Math.min(1, e.it.node.alpha * 1.15), near = e.it.kind === 'method' && e.it.parent && e.it.dn < 11 ? 1 : 0;   // switch, never cross-fade
-          arr[i] = e.kind === 'short' ? a * (1 - near) : a * near;
-        } else arr[i] = e.kind === 'zone' ? S.depth * (fl ? 0.25 : 0.7) : Math.min(1, e.L.a * 1.18) * (e.kind === 'more' ? 0.75 : 1);
+          v = e.kind === 'short' ? a * (1 - near) : a * near;
+        } else v = e.kind === 'zone' ? S.depth * (fl ? 0.25 : 0.7) : Math.min(1, e.L.a * 1.18) * (e.kind === 'more' ? 0.75 : 1);
+        v = Math.fround(v);
+        if (arr[i] !== v) { arr[i] = v; changed = true; }
       }
-      S.text.mesh.userData.alpha.needsUpdate = true;
-      S.textGroup.visible = S.depth > 0.01;
+      if (changed) { S.text.mesh.userData.alpha.needsUpdate = true; state.redraw = true; }
+      if (S.textGroup.visible !== S.depth > 0.01) { S.textGroup.visible = S.depth > 0.01; state.redraw = true; }
     }
   }
   const show = !!top && top.depth > 0.5 && !player.on && !lens;
@@ -514,6 +522,7 @@ function narrateRide(r) {
 
 function updateRide(dt) {
   if (!ride) return;
+  state.redraw = true;   // the ride pulse moves
   const r = ride;
   if (r.playing) r.t += dt;
   const lg = r.L.legs[r.i - 1];

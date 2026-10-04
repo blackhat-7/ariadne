@@ -1,5 +1,5 @@
 // theme.js
-// Exports: LOOK, VOXEL, THEME, oklch, mute, SVG, KINDS, EXT, PORTS, kindOf, extOf, initVocabulary
+// Exports: LOOK, VOXEL, QUALITY, THEME, oklch, mute, SVG, KINDS, EXT, PORTS, kindOf, extOf, initVocabulary
 // Imports: (nothing)
 
 // The world's look: 'glass' (default) or 'voxel'. Chosen in Settings (saved), or forced with ?theme=voxel for screenshots.
@@ -9,6 +9,13 @@ export const LOOK = (() => {
   return t === 'voxel' ? 'voxel' : 'glass';
 })();
 export const VOXEL = LOOK === 'voxel';
+
+// Render quality: 'auto' (default: picked from the GPU, see scene.js), 'high' or 'low'. Settings saves it; ?quality= overrides.
+export const QUALITY = (() => {
+  let q = new URLSearchParams(location.search).get('quality');
+  try { q ||= localStorage.getItem('ariadne.quality'); } catch { /* storage blocked */ }
+  return ['high', 'low'].includes(q) ? q : 'auto';
+})();
 
 
 // Colour: oklch (L 0..1, C, hue°) -> '#rrggbb' (sRGB, gamut-clipped). Domain tints share one lightness so no group shouts.

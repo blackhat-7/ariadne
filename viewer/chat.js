@@ -1,12 +1,12 @@
 // chat.js
 // Exports: saveCfg, loadAgents, renderCfg, filterModels, pickModel, history, probeChat, md, addMsg, initSettings, initChat
-// Imports: state: state | drawer: getJSON | hud: level, openCode | main: act | scene: player | theme: LOOK | util: $, clamp, esc
+// Imports: state: state | drawer: getJSON | hud: level, openCode | main: act | scene: player | theme: LOOK, QUALITY | util: $, clamp, esc
 import { state } from './state.js';
 import { getJSON } from './drawer.js';
 import { level, openCode } from './hud.js';
 import { act } from './main.js';
 import { player } from './scene.js';
-import { LOOK } from './theme.js';
+import { LOOK, QUALITY } from './theme.js';
 import { $, clamp, esc } from './util.js';
 
 export let saveCfg, history;
@@ -90,6 +90,14 @@ export function initSettings() {
     if (!look || look === LOOK) return;
     try { localStorage.setItem('ariadne.theme', look); } catch { /* storage blocked: the URL still carries it */ }
     const u = new URL(location.href); u.searchParams.set('theme', look); location.replace(u);
+  };
+  // Quality: same, since shadows and the render setup are chosen once at start.
+  $(`#quality [data-q="${QUALITY}"]`).classList.add('on');
+  $('#quality').onclick = (e) => {
+    const q = e.target.closest('[data-q]')?.dataset.q;
+    if (!q || q === QUALITY) return;
+    try { localStorage.setItem('ariadne.quality', q); } catch { /* storage blocked: the URL still carries it */ }
+    const u = new URL(location.href); u.searchParams.set('quality', q); location.replace(u);
   };
   $('#agents').onclick = (e) => { const b = e.target.closest('[data-agent]'); if (!b || b.disabled || b.dataset.agent === state.chatCfg.agent) return; state.chatCfg.agent = b.dataset.agent; state.chatCfg.model = ''; state.chatCfg.picked = false; saveCfg(); };
   $('#model').addEventListener('input', filterModels);

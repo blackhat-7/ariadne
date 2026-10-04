@@ -39,7 +39,7 @@ body.show-changes .chg{visibility:visible}
 .lb-use{font:italic 10.5px var(--mono);color:var(--ink-use)}
 .lb.active{z-index:2}
 .lb-fn.active,.lb-proxy.active{background:var(--cyan);color:var(--on-accent);border-color:var(--white)}
-.lb-code{width:360px;white-space:normal;background:var(--c-03101c-a82);border:.5px solid var(--white-a07);border-radius:10px;font:10.5px/1.5 var(--mono);color:var(--ink-code);box-shadow:0 8px 24px var(--black-a45);overflow:hidden;text-shadow:none}
+.lb-code{width:360px;white-space:normal;background:var(--c-030e18-a97);border:.5px solid var(--white-a07);border-radius:10px;font:10.5px/1.5 var(--mono);color:var(--ink-code);box-shadow:0 8px 24px var(--black-a45);overflow:hidden;text-shadow:none}
 .lb-code .hd,.code .hd{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 10px;background:var(--white-a03);border-bottom:.5px solid var(--white-a07);color:var(--ink-5);font:500 10.5px var(--mono)}
 .lb-code .body{padding:4px 0}
 

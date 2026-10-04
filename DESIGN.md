@@ -42,7 +42,9 @@ Direction: visionOS meets a pro Apple app. Calm, precise, crisp. Futuristic thro
 - Respect `prefers-reduced-motion`.
 
 ## Performance guardrails
-- Keep instancing; shared geometries/materials; no per-frame allocations.
+- Keep instancing (Glass) or baked meshes (Voxel); shared geometries/materials; no per-frame allocations; upload only attributes that changed.
+- Render on demand: draw only when something changed (camera, flights, hover, selection, fades, flows, pulses on lit links, resize); idle views draw ambient animation at ~10 fps (none on Low).
+- Quality (Settings, `ariadne.quality`, `?quality=`): Auto (default; Low on integrated Intel, base M1, mobile and software GPUs) | High | Low (no shadows, pixel ratio ≤ 1, no idle animation). Adaptive resolution steps the pixel ratio 2 → 1.5 → 1.25 → 1 (0.75 on Low) when frames average over 18 ms, and back up when there is headroom. Bloom runs at half resolution.
 - Target 60fps on a laptop GPU with a large real-world map (50+ parts); measure frame time before/after.
 
 ## Second look: Voxel
@@ -50,7 +52,7 @@ Direction: visionOS meets a pro Apple app. Calm, precise, crisp. Futuristic thro
 - Only the world changes (voxel.js + models in voxels.js); layout, picking, LOD, flows, labels, HUD, metro board, Lens and drawer are shared.
 - Style: MagicaVoxel-like renders, not Minecraft. Floating islands per domain and dock, small procedural models per kind, a voxel cart for flows.
 - Variation: each kind stays recognisable, but the seed (the node key) picks a variant, so no two look alike. Services grow 2–7 floors with code size and vary footprint, facade, window pattern, roof and details; jobs, libraries, tools and externals have 2–4 variants each. Islands get their own mix of trees, rocks, bushes, flowers, stepping-stone paths and glowing lamp posts, on the rim only.
-- Rendering: instanced unit cubes, sun with PCF soft shadows following the focus, GTAO, ACES, cool-to-warm sky, gentle fog, bloom on emissive voxels only.
+- Rendering: each model and island baked into one mesh (exposed faces only, greedy-merged, classic 4-corner voxel AO in the vertex colours); only moving voxels (clock faces, crates, the cart) are instanced and cast no shadows. Moonlight with PCF shadows following the focus, redrawn only when its frustum moves or casters change; ACES, cool-to-warm sky, gentle fog, bloom on emissive voxels only.
 - Faded things bleach toward the fog instead of turning see-through; the world dissolves (ordered dither) and the sky dims when a call board opens.
 
 ## Every UI surface (apply the above consistently)
