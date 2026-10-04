@@ -807,13 +807,42 @@ class Structure:
         threading.Thread(target=self.build, daemon=True).start()
 
     def build(self):
-        data = Path.home() / ".cache" / "ariadne" / re.sub(r"\W", "_", str(self.repo))
-        r = subprocess.run(["uvx", "code-review-graph", "build", "-q", "--skip-flows", "--repo", str(self.repo),
-                            "--data-dir", str(data)], capture_output=True, text=True, stdin=subprocess.DEVNULL)
-        if r.returncode != 0:
-            self.error = "code structure unavailable: " + (r.stderr.strip().splitlines() or ["build failed"])[-1]
+        """code-review-graph's database is hundreds of MB, mostly indexes we don't use. Build it in a temp
+        dir, keep only functions/types and call edges in a small cache, and reuse that cache until the
+        repo's commit or working tree changes."""
+        cache = Path.home() / ".cache" / "ariadne" / re.sub(r"\W", "_", str(self.repo))
+        compact, stamp = cache / "structure.db", cache / "stamp"
+        key = hashlib.sha1(((git(self.repo, "rev-parse", "HEAD") or "") +
+                            (git(self.repo, "status", "--porcelain") or "")).encode()).hexdigest()
+        if compact.exists() and stamp.exists() and stamp.read_text() == key:
+            self.db = compact
             return
-        self.db = data / "graph.db"
+        with tempfile.TemporaryDirectory() as tmp:
+            r = subprocess.run(["uvx", "code-review-graph", "build", "-q", "--skip-flows", "--repo", str(self.repo),
+                                "--data-dir", tmp], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+            if r.returncode != 0:
+                self.error = "code structure unavailable: " + (r.stderr.strip().splitlines() or ["build failed"])[-1]
+                return
+            cache.mkdir(parents=True, exist_ok=True)
+            for old in cache.glob("graph.db*"):   # the full database older versions kept here
+                old.unlink()
+            new = cache / "structure.db.tmp"
+            new.unlink(missing_ok=True)
+            db = sqlite3.connect(new)
+            db.execute("ATTACH ? AS g", (str(Path(tmp) / "graph.db"),))
+            db.executescript("""
+                CREATE TABLE nodes AS SELECT qualified_name, kind, name, parent_name, file_path, line_start,
+                    line_end, is_test FROM g.nodes WHERE kind IN ('Class', 'Function', 'Test');
+                CREATE TABLE edges AS SELECT kind, source_qualified, target_qualified, file_path
+                    FROM g.edges WHERE kind = 'CALLS';
+                CREATE INDEX nodes_file ON nodes(file_path);
+                CREATE INDEX edges_file ON edges(file_path);""")
+            db.commit()
+            db.execute("DETACH g")
+            db.close()
+            new.replace(compact)
+            stamp.write_text(key)
+        self.db = compact
 
     def part(self, part, kinds):
         """Code structure of one map part, plus its metro lines and effects (see METRO.md)."""
