@@ -485,7 +485,7 @@ function renderLegend(S) {
   }).join('');
   el.innerHTML = `<div class="ml-hd"><span class="tag">Lines</span><b>${esc(S.part.name)}</b><span class="ml-cnt">${S.placed.length} stations</span></div>
     <div class="ml-list">${rows || '<div class="ml-ft">No entry points found</div>'}</div>
-    <div class="ml-ft">${S.hiddenLines ? `+${S.hiddenLines} smaller entry points not drawn · ` : ''}click a station for the Lens · <kbd>/</kbd> search any function</div>`;
+    <div class="ml-ft">${S.hiddenLines ? `+${S.hiddenLines} smaller entry points not drawn · ` : ''}<span title="The Lens: a function's callers and callees as cards around it">click a station for the Lens</span> · <kbd>/</kbd> search any function</div>`;
 }
 
 /* ---------------- ride: a train pulse goes station by station, the camera follows, captions and voice ---------------- */

@@ -19,7 +19,7 @@ import tempfile
 import threading
 import time
 import webbrowser
-from collections import defaultdict
+from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -60,6 +60,10 @@ EXTERNAL_KINDS = {
              "github", "twilio", "posthog", "mixpanel", "firebase", "auth0", "datadog", "gmail",
              "google", "paddle", "intercom", "hubspot"],
 }
+# Outside systems named several ways are merged on a key that drops generic words and expands abbreviations.
+EXTERNAL_GENERIC = {"collector", "server", "service", "api", "client"}
+EXTERNAL_ALIASES = {"otel": "opentelemetry", "otlp": "opentelemetry", "pg": "postgres", "postgresql": "postgres",
+                    "k8s": "kubernetes", "gcs": "google cloud storage"}
 REF_RE = re.compile(r"^(.+):(\d+)$")
 CODE_CONTEXT = 6
 FN_WINDOW = 5
@@ -566,6 +570,38 @@ def guess_kind(name):
     return "other"
 
 
+def external_key(name):
+    """'OTel Collector', 'OTLP collector' and 'OpenTelemetry' -> 'opentelemetry'; 'Postgres Replica' stays apart."""
+    words = [EXTERNAL_ALIASES.get(w, w) for w in re.findall(r"[a-z0-9]+", name.lower())]
+    return " ".join([w for w in words if w not in EXTERNAL_GENERIC] or words)
+
+
+def merge_externals(parts, flows, kinds, externals):
+    """One outside system per thing: aliases are renamed, everywhere, to their most used (then longest) spelling."""
+    used = Counter(u["target"] for p in parts for u in p.get("uses", []) if u.get("target") in externals)
+    groups = defaultdict(list)
+    for e in sorted(externals):
+        groups[external_key(e)].append(e)
+    rename = {}
+    for names in groups.values():
+        best = max(names, key=lambda n: (used[n], len(n)))
+        rename |= {n: best for n in names if n != best}
+    for p in parts:
+        for u in p.get("uses", []):
+            if u.get("target") in rename:
+                u["target"] = rename[u["target"]]
+    steps = [s for p in parts for f in p.get("flows", []) for s in f.get("steps", [])]
+    for s in steps + [s for f in flows for s in f["steps"]]:
+        for k in ("from", "to"):
+            if s.get(k) in rename:
+                s[k] = rename[s[k]]
+    merged = {}
+    for e, k in kinds.items():   # an alias's specific kind beats another's "other"
+        if k != "other" or rename.get(e, e) not in merged:
+            merged[rename.get(e, e)] = k
+    return {rename.get(e, e) for e in externals}, merged
+
+
 def make_links(parts):
     links = {}
     for p in parts:
@@ -689,6 +725,7 @@ def assemble(args):
         except (RuntimeError, ValueError) as e:
             print(f"overview failed, clustering by folder: {e}", file=sys.stderr)
             summary, clusters, flows, kinds = "", folder_clusters(parts), [], {}
+    externals, kinds = merge_externals(parts, flows, kinds, externals)   # after the overview: its cache key stays put
     for c in clusters:
         for m in c.pop("members"):
             next(p for p in parts if p["id"] == m)["cluster"] = c["id"]

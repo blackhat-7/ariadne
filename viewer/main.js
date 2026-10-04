@@ -137,6 +137,7 @@ async function initBoot() {
     document.title = `${state.M.title || 'ariadne'} · ariadne`;
     $('#tname').textContent = state.M.title || 'ariadne';
     $('#summary').textContent = state.M.summary || '';
+    $('#summary').onclick = (e) => e.currentTarget.classList.toggle('open');   // clamped to two lines until clicked
     $('#rev').textContent = [state.M.revision, state.mapUrl.includes('sample') ? 'sample map' : ''].filter(Boolean).join(' · ');
     $('#sysflows').innerHTML = (state.M.systemFlows || []).map((f, i) => `<button data-play="system#${i}"><b>▶</b>${esc(f.title)}</button>`).join('');
     const nf = (state.M.systemFlows || []).length;

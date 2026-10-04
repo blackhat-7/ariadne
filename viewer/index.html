@@ -29,7 +29,7 @@
 
 <div id="top" class="hud glass corner">
   <div id="title"><span class="dot"></span><span id="tname">Ariadne</span></div>
-  <div id="summary"></div>
+  <div id="summary" title="Click to read all / fold"></div>
   <div id="rev" class="tag"></div>
   <button id="flowsbtn" class="tag"></button>
   <button id="rvbtn" class="tag" hidden>Review a branch…</button>
@@ -44,14 +44,14 @@
   <div id="legend" class="glass min">
     <h4><button id="legmin" class="tag">? Legend</button></h4>
     <div class="body">
-      <div class="note">shape = kind · colour = group</div>
+      <div class="note">shape = kind · colour = domain</div>
       <div id="legkinds"></div>
       <div class="grp tag">External systems</div>
       <div id="legext"></div>
       <div class="grp tag">Links</div>
       <div class="row"><span class="line"></span>calls / uses</div>
       <div class="note">moving light = direction</div>
-      <div class="row"><span class="beam"></span>traffic between groups</div>
+      <div class="row"><span class="beam"></span>traffic between domains</div>
       <div class="note">thicker = more connections</div>
       <div class="row"><span class="unv">⚠</span>code ref not verified</div>
       <div class="row"><span style="width:12px;height:12px;border:2px solid var(--rel-caller);border-radius:50%;flex:none"></span>changed (with Δ overlay)</div>
