@@ -20,7 +20,7 @@ const CAM_KEY = 'ariadne.reviewCam', FILTER_KEY = 'ariadne.reviewFilters';
 
 // data: the review JSON. head: the selected head as the API names it ("<branch>" | "pr:<N>"), '' = the server's own review.
 // rows: the visible functions in list order; cur: the highlighted one (its id). done: reviewed function ids.
-const R = { data: null, head: '', base: '', rows: [], cur: null, done: new Set(), f: { high: false, hideLow: false, hideTests: true },
+const R = { data: null, head: '', base: '', rows: [], cur: null, opened: null, done: new Set(), f: { high: false, hideLow: false, hideTests: true },
   diffs: new Map(), diffOn: true, narr: null, narrBusy: false, narrNote: '', map: null, tour: null, busy: null, error: '', blastSaved: null };
 let panel, tourBar, pick = null;
 
@@ -275,7 +275,7 @@ function setReview(j, head, base = '') {
   R.data = j; R.head = head; R.base = base; R.diffs.clear(); R.narr = null; R.narrNote = ''; R.map = null;
   try { R.done = new Set(JSON.parse(localStorage.getItem('ariadne.reviewed.' + j.head?.rev) || '[]')); } catch { R.done = new Set(); }
   const hash = head ? `#review=${head.startsWith('pr:') ? head : 'branch:' + head}${base ? '&base=' + encodeURIComponent(base) : ''}` : '#review';
-  if (location.hash !== hash) history.replaceState(null, '', hash);
+  if (location.hash !== hash) history.replaceState(history.state, '', hash);   // keeps back/forward's entry (nav.js)
   showPanel(true);
   markReview(Object.fromEntries((j.parts || []).filter((p) => RISK_COLOR[p.risk]).map((p) => [p.id, RISK_COLOR[p.risk]])));
   R.cur = null; render();
@@ -293,7 +293,7 @@ function showPanel(on) {
 function exitReview() {
   R.ctl?.abort();
   showPanel(false);
-  history.replaceState(null, '', location.pathname + location.search);
+  history.replaceState(history.state, '', location.pathname + location.search);
   if (state.curFile && drawer.classList.contains('open')) { const f = state.curFile; state.curFile = null; openFile(f, 0); }
 }
 
@@ -366,7 +366,7 @@ function render() {
     ${total ? `<div class="rv-progress"><div class="rv-bar"><i style="width:${(100 * done) / total}%"></i></div><span><b>${done}/${total}</b> reviewed</span></div>
     <div class="rv-filters" role="group" aria-label="Filters"><button data-f="high" class="${R.f.high ? 'on' : ''}">High only</button><button data-f="hideLow" class="${R.f.hideLow ? 'on' : ''}">Hide low</button><button data-f="hideTests" class="${R.f.hideTests ? 'on' : ''}">Hide tests/generated</button></div>` : ''}
     <div class="rv-list">${list}</div></div>
-    <div class="rv-keys"><span><kbd>j</kbd><kbd>k</kbd> move</span><span><kbd>↵</kbd> open</span><span><kbd>]</kbd><kbd>[</kbd> high risk</span><span><kbd>r</kbd> reviewed</span></div>`;
+    <div class="rv-keys">${total ? `<span class="rv-step"><button data-rv="prev" title="Open the previous function (k moves without opening)">${I.chevL}</button><button data-rv="next" title="Open the next function (j moves without opening)">${I.chevR}</button></span>` : '<span><kbd>j</kbd><kbd>k</kbd> move</span>'}<span><kbd>↵</kbd> open</span><span><kbd>]</kbd><kbd>[</kbd> high risk</span><span><kbd>r</kbd> reviewed</span></div>`;
   panel.querySelector('.rv-scroll').scrollTop = keep;
   panel.querySelector('.rv-row.cur')?.scrollIntoView({ block: 'nearest' });
 }
@@ -408,7 +408,7 @@ function itemOf(f) {
 
 // Fly to the function's part and open the Lens x-ray on it, the diff at the change (ci, else the first), linked.
 function openFn(f, ci = 0) {
-  R.cur = f.id; render(); blast(null);
+  R.cur = R.opened = f.id; render(); blast(null);
   const c = f.changes[ci] || f.changes[0], it = f.status !== 'removed' && itemOf(f);
   if (it) {
     const S = it.node.owner.struct;
@@ -644,6 +644,10 @@ export function initReview() {
     if (a === 'narr') return summarize();
     if (a === 'settings') return openSettings();
     if (a === 'remap') return confirmRemap();
+    if (a === 'prev' || a === 'next') {   // the highlighted row first, if it was never opened
+      if (R.opened === R.cur) move(a === 'next' ? 1 : -1);
+      return R.cur && openFn(fnById(R.cur));
+    }
     const fb = t.closest('[data-f]');
     if (fb) { R.f[fb.dataset.f] = !R.f[fb.dataset.f]; try { localStorage.setItem(FILTER_KEY, JSON.stringify(R.f)); } catch { /* storage blocked */ } return render(); }
     const ref = t.closest('[data-ref]'); if (ref?.dataset.ref) return openCode(ref.dataset.ref);

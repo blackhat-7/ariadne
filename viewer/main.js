@@ -1,6 +1,6 @@
 // main.js
 // Exports: (none: entry point)
-// Imports: state: state | board: initBoard, loadStructures | review: initReview | chat: initChat, initSettings, loadAgents, probeChat | drawer: closeDrawer, closePop, drawer, gpop, initCodeBrowser, initCodeLink, navHist, openFinder, overlay, probeCodeApi, updateBeacon | hud: buildLegend, buildSearch, drawMini, initBreadcrumb, initDetailPanel, initHoverCard, initLabels, initLegend, initMinimap, initResizablePanels, initSearch, level, openCode, openSearch, setKinds, stepOut, updateCrumbs, updateHover, updateLabels | scene: LOW, build, camPos, camera, clusters, composer, controls, exts, findEnt, fly, flyOverview, flyToEnt, initCameraFlight, initFlowPlayback, initLod, initNavigation, initPicking, initShaders, initState, initThreeSetup, initWorldModel, kindOn, parts, playFlow, player, renderer, select, setEmphasis, setResolution, stopFlow, uTime, updateFly, updateLOD, updatePlayer, updateViewOffset | theme: initVocabulary | util: $, esc, initUtil | voice: initVoice
+// Imports: state: state | board: initBoard, loadStructures | review: initReview | nav: initNav | chat: initChat, initSettings, loadAgents, probeChat | drawer: closeDrawer, closePop, drawer, gpop, initCodeBrowser, initCodeLink, navHist, openFinder, overlay, probeCodeApi, updateBeacon | hud: buildLegend, buildSearch, drawMini, initBreadcrumb, initDetailPanel, initHoverCard, initLabels, initLegend, initMinimap, initResizablePanels, initSearch, level, openCode, openSearch, setKinds, stepOut, updateCrumbs, updateHover, updateLabels | scene: LOW, build, camPos, camera, clusters, composer, controls, exts, findEnt, fly, flyOverview, flyToEnt, initCameraFlight, initFlowPlayback, initLod, initNavigation, initPicking, initShaders, initState, initThreeSetup, initWorldModel, kindOn, parts, playFlow, player, renderer, select, setEmphasis, setResolution, stopFlow, uTime, updateFly, updateLOD, updatePlayer, updateViewOffset | theme: initVocabulary | util: $, esc, initUtil | voice: initVoice
 import * as THREE from 'three';
 import { state } from './state.js';
 import { initBoard, loadStructures } from './board.js';
@@ -11,6 +11,7 @@ import { LOW, build, camPos, camera, clusters, composer, controls, exts, findEnt
 import { initVocabulary } from './theme.js';
 import { initVoice } from './voice.js';
 import { initReview } from './review.js';
+import { initNav } from './nav.js';
 import { $, esc, initUtil } from './util.js';
 
 export let clock;
@@ -149,7 +150,7 @@ async function initBoot() {
     controls.maxDistance = state.overviewDist * 2.5;
     controls.target.set(0, 0, 0);
     camPos.set(0, Math.sin(0.9) * state.overviewDist * 1.4, Math.cos(0.9) * state.overviewDist * 1.4);
-    flyOverview(); fly.dur = 2.2;
+    flyOverview(false); fly.dur = 2.2;
     window.ariadne = { act, map: state.M, play: (id) => playFlow(id), state: () => ({ level: level(), selected: state.selected, flow: player.on ? { id: player.id, step: player.i } : null, camera: { target: controls.target.toArray(), distance: camPos.distanceTo(controls.target) }, board: state.focusPart?.struct ? { part: state.focusPart.id, depth: +state.focusPart.struct.depth.toFixed(2) } : null }) };
     requestAnimationFrame(frame);
     $('#boot').classList.add('gone');
@@ -190,6 +191,7 @@ initKeyboard();
 initNavigation();
 initLoop();
 await initBoot();
+initNav();
 if (state.M) initReview();   // PR review mode (#review), after the map is built
 
 // Deep link: #act=[{...}, ...] runs those actions after boot, 1.5s apart (shareable views, screenshots).

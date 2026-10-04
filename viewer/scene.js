@@ -1,12 +1,13 @@
 // scene.js
 // Exports: LOW, setResolution, solidMats, shadowMat, lineRes, spinTime, bgColor, fatLoop, slab, stage, renderer, scene, camera, controls, rt, composer, bloom, uTime, nodeMats, ATLAS, CELL, atlasCv, atlasCtx, atlasCells, LUCIDE, atlasTex, atlasCell, iconMat, lineMat, tubeMat, shellMat, LineSet, curve, parts, clusters, exts, docks, nodes, nodeByKey, meshes, linkSet, trackSet, streams, at, merge, G, SHAPES, AMBER, addNode, shapeOfPart, partScale, build, buildDetail, kindOn, recolor, setEmphasis, markReview, dimOf, camPos, updateLOD, fly, fv, flyTo, updateViewOffset, updateFly, flyOverview, flyToEnt, resolveEnt, entFromNode, findEnt, select, labelOf, dive, ray, ndc, pick, entFromEvent, player, MOVE, STEP, pulseTex, pulse, trailGeo, trail, flowById, actorPos, actorKey, playFlow, gotoStep, stopFlow, pv, updatePlayer, isMac, isTrackpad, navPlane, navP, navN, navR, navU, zoomAt, panBy, gestureOpts, initThreeSetup, initShaders, initWorldModel, initState, initLod, initCameraFlight, initPicking, initFlowPlayback, initNavigation
-// Imports: state: state | board: boardNear, flyToBoard, openLens, setFacing, updateStructs | drawer: codeHtml, drawer, openFile | hud: Label, closeDetail, detail, hoverEl, openCode, showDetail | theme: EXT, KINDS, PORTS, QUALITY, THEME, VOXEL, extOf, kindOf | util: $, V3, clamp, ease, esc, hashStr, rng, smooth | voice: cancelSpeech, pauseSpeech, renderVoiceButton, resumeSpeech, speak, stepSpeech, voice | voxel: BOX, CUBE, RING, followSun, refreshShadows, setVoxAlpha, setVoxHot, setupVoxel, uWorld, voxCart, voxIsland, voxMesh, voxNode | voxels: cart, externalModel, partModel
+// Imports: state: state | nav: remember | board: boardNear, flyToBoard, openLens, setFacing, updateStructs | drawer: codeHtml, drawer, openFile | hud: Label, closeDetail, detail, hoverEl, openCode, showDetail | theme: EXT, KINDS, PORTS, QUALITY, THEME, VOXEL, extOf, kindOf | util: $, V3, clamp, ease, esc, hashStr, rng, smooth | voice: cancelSpeech, pauseSpeech, renderVoiceButton, resumeSpeech, speak, stepSpeech, voice | voxel: BOX, CUBE, RING, followSun, refreshShadows, setVoxAlpha, setVoxHot, setupVoxel, uWorld, voxCart, voxIsland, voxMesh, voxNode | voxels: cart, externalModel, partModel
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { remember } from './nav.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
@@ -663,6 +664,7 @@ export function updateLOD(dt) {
 }
 
 export function flyTo(target, dist, opts = {}) {
+  if (opts.hist !== false) remember();   // a jump: back (nav.js) returns to where it started
   fly.t0.copy(controls.target); fly.t1.copy(target);
   fly.d0.subVectors(camPos, controls.target); fly.r0 = fly.d0.length(); fly.d0.normalize();
   const d = opts.dir ? opts.dir.clone().normalize() : fly.d0.clone();
@@ -835,8 +837,8 @@ export function gotoStep(i, fromVoice = false) {
   state.activeKeys = new Set([actorKey(s.from), actorKey(s.to)]); recolor();
   if (drawer.classList.contains('open') && s.ref) { const m = /^(.*):(\d+)$/.exec(s.ref); if (m) openFile(m[1], +m[2]); }
   const mid = new V3().addVectors(player.a, player.b).multiplyScalar(0.5);
-  if (player.part) { const p = player.part; mid.lerp(p.pos, 0.55); flyTo(mid, p.focusDist * 0.95, { dur: i === 0 ? 1.3 : 0.9 }); }
-  else flyTo(mid, clamp(player.a.distanceTo(player.b) * 1.4, 80, 320), { dur: 1.1 });
+  if (player.part) { const p = player.part; mid.lerp(p.pos, 0.55); flyTo(mid, p.focusDist * 0.95, { dur: i === 0 ? 1.3 : 0.9, hist: i === 0 }); }
+  else flyTo(mid, clamp(player.a.distanceTo(player.b) * 1.4, 80, 320), { dur: 1.1, hist: i === 0 });
   const unv = s.ref && state.M.code?.[s.ref]?.verified === false;
   $('#fbcap').innerHTML = `<span class="n">${i + 1}/${player.steps.length}</span><span>${esc(s.text)}${s.ref ? ` — <span class="rf" data-ref="${esc(s.ref)}">${esc(s.ref.split('/').pop())}</span>${unv ? ' <span class="unv" title="unverified">⚠</span>' : ''}` : ''}</span>`;
   $('#fbprog').querySelectorAll('i').forEach((el, j) => { el.className = j < i ? 'done' : j === i ? 'cur' : ''; });
@@ -1255,7 +1257,7 @@ export function initCameraFlight() {
   fly = { on: false, t: 0, dur: 1, t0: new V3(), t1: new V3(), d0: new V3(), d1: new V3(), r0: 1, r1: 1, s: new Float64Array(14) };
   fv = new V3();
   state.viewOff = 0;
-  flyOverview = () => flyTo(new V3(0, 0, 0), state.overviewDist, { minEl: 0.85, maxEl: 1.0 });
+  flyOverview = (hist) => flyTo(new V3(0, 0, 0), state.overviewDist, { minEl: 0.85, maxEl: 1.0, hist });
 }
 
 export function initPicking() {

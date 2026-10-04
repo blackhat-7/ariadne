@@ -98,6 +98,11 @@ body.show-changes .chg{visibility:visible}
 /* ---------- Spotlight search ---------- */
 #searchbtn{left:50%;top:16px;transform:translateX(-50%);height:36px;min-width:300px;padding:0 9px 0 12px;border-radius:999px;font:13px var(--sans);color:var(--dim);display:flex;gap:8px;align-items:center}
 #searchbtn:hover{color:var(--ink)}
+#nav{right:calc(50% + 158px);top:16px;height:36px;padding:0 3px;border-radius:999px;display:flex;align-items:center;gap:1px}
+#nav button{display:grid;place-items:center;width:30px;height:30px;border-radius:50%;color:var(--dim)}
+#nav button:hover:not(:disabled){background:var(--white-a07);color:var(--ink)}
+#nav button:disabled{opacity:.3}
+#nav .ic{width:16px;height:16px}
 #searchbtn kbd{margin-left:auto}
 #search{left:50%;top:14vh;transform:translateX(-50%);width:min(640px,calc(100vw - 32px));display:none;padding:0;border-radius:18px;overflow:hidden;z-index:15;box-shadow:0 24px 80px var(--black-a55),0 0 0 100vmax rgba(2,6,13,.35)}
 #search.corner::before,#search.corner::after{display:none}
@@ -351,4 +356,5 @@ body.resizing,body.resizing *{user-select:none!important}
 .sh .ic,.tog i,.tog i::after{transition:none}
 }
 /* Phone: the search pill sits under the title panel instead of overlapping it. */
-@media (max-width:900px){#searchbtn{left:16px;right:16px;transform:none;min-width:0;top:auto;bottom:16px}}
+@media (max-width:900px){#searchbtn{left:16px;right:88px;transform:none;min-width:0;top:auto;bottom:16px}
+#nav{right:16px;top:auto;bottom:16px}}

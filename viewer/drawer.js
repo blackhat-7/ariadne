@@ -231,7 +231,7 @@ export function showCodeLink(force) {
     dist = focusPartObj.focusDist;
   } else { target = at.clone(); dist = 60; }
   const curD = camPos.distanceTo(controls.target);
-  if (force || controls.target.distanceTo(target) > dist * 0.25 || Math.abs(Math.log(curD / dist)) > 0.5) flyTo(target, dist, { dur: 1.2 });
+  if (force || controls.target.distanceTo(target) > dist * 0.25 || Math.abs(Math.log(curD / dist)) > 0.5) flyTo(target, dist, { dur: 1.2, hist: !!force });   // following the code as you read is not a jump
 }
 
 export function clearCodeLink() {

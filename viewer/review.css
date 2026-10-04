@@ -113,8 +113,12 @@ a.rv-title:hover{color:var(--accent)}
 .rv-frow span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rv-frow em{flex:none;font:500 10px var(--sans);font-style:normal;color:var(--n4);padding:1px 5px;border-radius:4px;background:var(--fill)}
 .rv-frow small{margin-left:auto;flex:none;color:var(--n4)}
-.rv-keys{display:flex;flex-wrap:wrap;gap:4px 12px;padding:8px 16px 12px;border-top:.5px solid var(--hairline);font:11px var(--sans);color:var(--n4)}
+.rv-keys{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;padding:8px 16px 12px;border-top:.5px solid var(--hairline);font:11px var(--sans);color:var(--n4)}
 .rv-keys kbd{height:16px;min-width:16px;font-size:10px}
+.rv-step{display:flex;gap:2px;margin-right:2px}
+.rv-step button{display:grid;place-items:center;width:24px;height:22px;border-radius:6px;color:var(--n2);background:var(--fill-2)}
+.rv-step button:hover{color:var(--n1)}
+.rv-step .ic{width:14px;height:14px}
 
 .rv-state{display:flex;flex-direction:column;align-items:center;gap:6px;padding:28px 16px;text-align:center;font:12.5px/1.45 var(--sans);color:var(--n3)}
 .rv-state>.ic{width:20px;height:20px;color:var(--n4)}

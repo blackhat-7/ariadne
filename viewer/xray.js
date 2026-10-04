@@ -536,10 +536,12 @@ async function explain() {
     const r = await fetch('/api/xray/explain', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ file: fn.file, line: fn.start, agent: cfg.agent, model: cfg.model }) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok || j.error || !j.labels) throw new Error(j.error || (r.status === 404 ? 'This server cannot explain yet.' : `The server answered ${r.status}.`));
-    labelsOf.set(`${fn.file}:${fn.start}`, j.labels);
-    if (X !== me) return;
-    X.busy = false;
-    if (!Object.keys(j.labels).length) X.note = 'The model gave no labels for this function.';
+    const key = `${fn.file}:${fn.start}`, n = Object.keys(j.labels).length;
+    labelsOf.set(key, j.labels);
+    me.busy = false;
+    if (X?.fnKey !== key || !X.chart?.isConnected) return;   // the Lens moved on; the labels show when it comes back
+    X.busy = false;   // the same function may have been re-mounted while the model answered
+    X.note = n ? `Plain-English labels added to ${n} steps, above their code.` : 'The model gave no labels for this function.';
     renderBar(); renderChart();
   } catch (e) {
     if (X !== me) return;

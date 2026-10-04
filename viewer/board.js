@@ -1,6 +1,6 @@
 // board.js
-// Exports: structs, loadStructures, buildStruct, disposeStruct, setFacing, boardNear, usesOf, usersOf, updateStructs, structNodeAt, flyToBoard, openLens, setGateLines, initBoard
-// Imports: state: state | drawer: drawer, getJSON, gpop, overlay | hud: I, detail, openCode, showDetail | scene: G, LineSet, SHAPES, camPos, camera, controls, dive, fly, flyTo, kindOn, meshes, nodeByKey, parts, player, pulseTex, recolor, renderer, scene, solidMats | theme: EXT, PORTS, THEME, kindOf, oklch | util: $, V3, clamp, ease, esc, hashStr, smooth, reducedMotion | voice: cancelSpeech, speak, voice | xray: mountXray
+// Exports: structs, loadStructures, buildStruct, disposeStruct, setFacing, boardNear, usesOf, usersOf, updateStructs, structNodeAt, flyToBoard, openLens, lensPlace, showLens, setGateLines, initBoard
+// Imports: state: state | nav: remember | drawer: drawer, getJSON, gpop, overlay | hud: I, detail, openCode, showDetail | scene: G, LineSet, SHAPES, camPos, camera, controls, dive, fly, flyTo, kindOn, meshes, nodeByKey, parts, player, pulseTex, recolor, renderer, scene, solidMats | theme: EXT, PORTS, THEME, kindOf, oklch | util: $, V3, clamp, ease, esc, hashStr, smooth, reducedMotion | voice: cancelSpeech, speak, voice | xray: mountXray
 // The metro map of a part's code (METRO.md), on an upright board under the part. Each entry point is a coloured line
 // running left to right through its main call path; side calls are short spurs; stations shared by lines are interchanges.
 // Clicking a station opens the Lens: its callers and callees as file cards around it, or (X-ray) the function's own flowchart.
@@ -13,6 +13,7 @@ import { EXT, PORTS, THEME, kindOf, oklch } from './theme.js';
 import { $, V3, clamp, ease, esc, hashStr, smooth, reducedMotion } from './util.js';
 import { cancelSpeech, speak, speakFlow, voice } from './voice.js';
 import { mountXray } from './xray.js';
+import { remember } from './nav.js';
 
 export let structs;
 // grid: COL world units between columns, ROW between rows; GAP between parallel lines on a shared segment
@@ -376,9 +377,9 @@ export function structNodeAt(part, path, line, word) {
 const boardDir = (S) => new V3(Math.sin(S.facing), 0.12, Math.cos(S.facing));
 
 // Entering a board makes its part the focus, which then holds while the view stays on the board (neighbouring boards can overlap).
-function flyToStation(S, it, dist = 12, dur) {
+function flyToStation(S, it, dist = 12, dur, hist) {
   state.focusPart = S.part;
-  flyTo(it.pos, dist, { dir: boardDir(S), minEl: 0.04, maxEl: 0.18, dur });
+  flyTo(it.pos, dist, { dir: boardDir(S), minEl: 0.04, maxEl: 0.18, dur, hist });
 }
 
 // A station: fly to it. An item off the lines: frame the metro and open the Lens on it. Nothing: frame the start of the lines.
@@ -517,7 +518,7 @@ function gotoStation(i, fromVoice = false) {
     <span class="rd-cap">${prev ? `${esc(prev.name)} <span class="ar">→</span> <b>${esc(cur.name)}</b>` : `starts at <b>${esc(cur.name)}</b>`}</span>
     <button data-r="prev" title="Previous station">${I.back}</button><button data-r="play" title="Play / pause">${r.playing ? I.pause : I.play}</button><button data-r="next" title="Next station">${I.fwd}</button><button data-r="stop" title="Stop (Esc)">${I.x}</button>`;
   if (!fromVoice) narrateRide(r);
-  flyToStation(r.S, cur, clamp(camPos.distanceTo(controls.target), 12, 22), i ? 1.1 : 1.4);
+  flyToStation(r.S, cur, clamp(camPos.distanceTo(controls.target), 12, 22), i ? 1.1 : 1.4, !i);
 }
 
 // The rest of the ride is one utterance that moves the stations itself (no audio pop between them).
@@ -547,6 +548,7 @@ function updateRide(dt) {
 /* ---------------- Lens: callers left, callees right, as file cards around the centre ---------------- */
 export function openLens(it) {
   const S = it.node?.owner?.struct; if (!S) return;
+  remember();   // before the Lens changes, so back returns to the view without it
   stopRide();
   lens = { S, trail: [it] };
   $('#lens').hidden = false;
@@ -560,6 +562,10 @@ function recentre(it, dir) {
   renderLens(dir);
   if (it.placed) flyToStation(lens.S, it, 14, 1.0);
 }
+
+// The Lens as a place to come back to (nav.js), and back to it.
+export const lensPlace = () => lens && { it: lens.trail[lens.trail.length - 1], xray: xrayOn };
+export function showLens(p) { if (!p) return closeLens(); xrayOn = p.xray; openLens(p.it); }
 
 function closeLens() {
   if (!lens) return;

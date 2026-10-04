@@ -1318,7 +1318,7 @@ class Reviews:
         if rev is None or rev == (git(self.root, "rev-parse", "HEAD") or "").strip():
             return self.root, self.home, None
         cache = part_cache(self.root)
-        return cache / "worktree", cache / "maps" / f"{rev[:12]}.map.json", rev
+        return cache / "worktree" / self.root.name, cache / "maps" / f"{rev[:12]}.map.json", rev   # named like the repo: the map's title
 
     def status(self):
         """How far the shown map is from the selected head, and what refreshing it would cost."""
