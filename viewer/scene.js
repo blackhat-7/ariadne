@@ -19,7 +19,7 @@ import { codeHtml, drawer, openFile } from './drawer.js';
 import { Label, closeDetail, detail, hoverEl, openCode, showDetail } from './hud.js';
 import { EXT, KINDS, PORTS, THEME, extOf, kindOf, mute } from './theme.js';
 import { $, V3, clamp, ease, esc, hashStr, reducedMotion, rng, smooth, spring } from './util.js';
-import { cancelSpeech, pauseSpeech, renderVoiceButton, resumeSpeech, speak, stepSpeech, voice } from './voice.js';
+import { cancelSpeech, pauseSpeech, renderVoiceButton, resumeSpeech, speak, speakFlow, stepSpeech, voice } from './voice.js';
 
 export let stage, renderer, scene, camera, controls, rt, composer, bloom, uTime, nodeMats, ATLAS, CELL, atlasCv, atlasCtx, atlasCells, LUCIDE, atlasTex, iconMat, lineMat, tubeMat, shellMat, parts, clusters, exts, docks, nodes, nodeByKey, meshes, linkSet, trackSet, streams, at, merge, G, SHAPES, AMBER, shapeOfPart, partScale, kindOn, dimOf, camPos, fly, fv, flyOverview, ray, ndc, player, MOVE, STEP, pulseTex, pulse, trailGeo, trail, pv, isMac, navPlane, navP, navN, navR, navU, gestureOpts, solidMats, shadowMat, lineRes, spinTime, bgColor;
 let glassMat, floorShadowMat;
@@ -726,7 +726,7 @@ export function playFlow(id, startAt = 0) {
   return true;
 }
 
-export function gotoStep(i) {
+export function gotoStep(i, fromVoice = false) {
   const s = player.steps[i]; if (!s) return;
   player.i = i; player.t = 0;
   player.a.copy(actorPos(s.from, player.b)); player.b.copy(actorPos(s.to, player.a));
@@ -739,13 +739,22 @@ export function gotoStep(i) {
   $('#fbcap').innerHTML = `<span class="n">${i + 1}/${player.steps.length}</span><span>${esc(s.text)}${s.ref ? ` — <span class="rf" data-ref="${esc(s.ref)}">${esc(s.ref.split('/').pop())}</span>${unv ? ' <span class="unv" title="unverified">⚠</span>' : ''}` : ''}</span>`;
   $('#fbprog').querySelectorAll('i').forEach((el, j) => { el.className = j < i ? 'done' : j === i ? 'cur' : ''; });
   playButton(player.playing ? 'playing' : 'paused');
-  narrate();
+  narrate(fromVoice);
   document.querySelectorAll('.flow li.cur').forEach((el) => el.classList.remove('cur'));
   document.querySelector(`.flow[data-flow="${CSS.escape(player.id)}"] li[data-step="${i}"]`)?.classList.add('cur');
 }
 
-// Speak the current step when narration is on. player.voiceEnd: null = timed step, Infinity = speaking, else player.t when speech ended.
-function narrate() {
+// Narration. player.voiceEnd: null = timed step, Infinity = speaking, else player.t when speech ended.
+// The rest of the flow is read as one utterance that moves the steps itself (no pop between steps);
+// a manual jump restarts it from that step. Voices without progress events fall back to one per step.
+function narrate(fromVoice = false) {
+  if (fromVoice) return;   // the running flow utterance just reached this step
+  if (voice.on && speakFlow(player.steps.map(stepSpeech), player.i, player.speed,
+    (i) => { if (player.on) gotoStep(i, true); },
+    (why) => { if (!player.on) return; if (why === 'fallback') narrate(); else player.voiceEnd = player.t; })) {
+    player.voiceEnd = Infinity;
+    return;
+  }
   const ok = voice.on && speak(stepSpeech(player.steps[player.i]), player.speed, () => { player.voiceEnd = player.t; });
   player.voiceEnd = ok ? Infinity : null;
 }

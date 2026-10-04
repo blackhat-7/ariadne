@@ -1,5 +1,5 @@
 // voice.js
-// Exports: voice, speak, stepSpeech, pauseSpeech, resumeSpeech, cancelSpeech, renderVoiceButton, initVoice
+// Exports: voice, speak, speakFlow, stepSpeech, pauseSpeech, resumeSpeech, cancelSpeech, renderVoiceButton, initVoice
 // Imports: hud: I | util: $, clamp, esc
 // Flow narration with the browser's Web Speech API (speechSynthesis): speaking primitives plus the Voice settings section.
 import { I } from './hud.js';
@@ -9,25 +9,6 @@ const synth = window.speechSynthesis;
 // ok: the browser can speak. on: narration toggle on the flow bar (starts from cfg.on). cfg: saved settings.
 export const voice = { ok: !!(synth && window.SpeechSynthesisUtterance), on: false, cfg: { on: true, uri: '', rate: 1, detail: false } };
 let current = null, ended = null;   // the utterance whose end we report, and its callback
-
-// macOS turns the audio output off between utterances and pops when it turns back on.
-// A silent stream keeps the output open while narration is in use; it closes after 4s of quiet.
-let ctx = null, idle = 0;
-function keepAudioAwake() {
-  clearTimeout(idle);
-  if (!ctx) {
-    try {
-      ctx = new AudioContext();
-      const gain = ctx.createGain(); gain.gain.value = 0;
-      const src = ctx.createConstantSource(); src.connect(gain).connect(ctx.destination); src.start();
-    } catch { ctx = null; return; }
-  }
-  if (ctx.state === 'suspended') ctx.resume();
-}
-function letAudioSleep() {
-  clearTimeout(idle);
-  idle = setTimeout(() => { ctx?.close(); ctx = null; }, 4000);
-}
 
 // Speak text at the settings rate times `speed`. Calls onEnd once when it finishes, fails, or another speak() replaces it.
 // cancelSpeech() drops it silently. Returns false (and says nothing) when speech is unavailable
@@ -39,10 +20,41 @@ export function speak(text, speed, onEnd) {
   const u = new SpeechSynthesisUtterance(text);
   u.voice = synth.getVoices().find((v) => v.voiceURI === voice.cfg.uri) || null;
   u.rate = clamp(voice.cfg.rate * speed, 0.1, 10);
-  u.onend = u.onerror = () => { if (current === u) { current = ended = null; letAudioSleep(); onEnd?.(); } };
-  keepAudioAwake();
+  u.onend = u.onerror = () => { if (current === u) { current = ended = null; onEnd?.(); } };
   current = u; ended = onEnd;
   if (synth.paused) synth.resume();   // a paused synth would otherwise hold the new utterance
+  synth.speak(u);
+  return true;
+}
+
+// Read the rest of a flow as ONE utterance: macOS pops each time speech starts, so steps must not
+// be separate utterances. onReach(i) fires as the voice reaches step i (boundary events); onDone()
+// when it finishes, or onDone('fallback') if this voice reports no progress, after which callers
+// should speak step by step (voice.noBoundary stays set for the session).
+export function speakFlow(texts, from, speed, onReach, onDone) {
+  if (!voice.ok || voice.noBoundary || navigator.userActivation?.hasBeenActive === false) return false;
+  const prev = ended;
+  cancelSpeech(); prev?.();
+  const starts = [];
+  let text = '';
+  for (const t of texts.slice(from)) { starts.push(text.length); text += t.replace(/[\s.!?]*$/, '. '); }
+  const u = new SpeechSynthesisUtterance(text);
+  u.voice = synth.getVoices().find((v) => v.voiceURI === voice.cfg.uri) || null;
+  u.rate = clamp(voice.cfg.rate * speed, 0.1, 10);
+  let reached = 0, heard = false;
+  const probe = setTimeout(() => {
+    if (heard || current !== u) return;
+    voice.noBoundary = true; cancelSpeech(); onDone?.('fallback');
+  }, 2500);
+  u.onboundary = (e) => {
+    heard = true;
+    let k = reached;
+    while (k + 1 < starts.length && starts[k + 1] <= e.charIndex) k++;
+    if (k > reached) { reached = k; onReach(from + k); }
+  };
+  u.onend = u.onerror = () => { clearTimeout(probe); if (current === u) { current = ended = null; onDone?.(); } };
+  current = u; ended = null;
+  if (synth.paused) synth.resume();
   synth.speak(u);
   return true;
 }

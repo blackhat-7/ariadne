@@ -11,7 +11,7 @@ import { I, detail, openCode, showDetail } from './hud.js';
 import { G, LineSet, SHAPES, camPos, camera, controls, dive, fly, flyTo, kindOn, meshes, nodeByKey, parts, player, pulseTex, recolor, renderer, scene, solidMats } from './scene.js';
 import { EXT, PORTS, THEME, kindOf, oklch } from './theme.js';
 import { $, V3, clamp, ease, esc, hashStr, smooth, reducedMotion } from './util.js';
-import { cancelSpeech, speak, voice } from './voice.js';
+import { cancelSpeech, speak, speakFlow, voice } from './voice.js';
 
 export let structs;
 // grid: COL world units between columns, ROW between rows; GAP between parallel lines on a shared segment
@@ -494,15 +494,22 @@ function stopRide() {
   $('#ride').hidden = true;
 }
 
-function gotoStation(i) {
+function gotoStation(i, fromVoice = false) {
   const r = ride, st = r.L.trunk, cur = st[i], prev = st[i - 1];
   r.i = i; r.t = 0;
   $('#ride').innerHTML = `<span class="rd-sw"></span><span class="rd-l" title="${esc(r.L.label)}">${esc(trunc(r.L.label, 30))}</span><span class="rd-n">${i + 1}/${st.length}</span>
     <span class="rd-cap">${prev ? `${esc(prev.name)} <span class="ar">→</span> <b>${esc(cur.name)}</b>` : `starts at <b>${esc(cur.name)}</b>`}</span>
     <button data-r="prev" title="Previous station">${I.back}</button><button data-r="play" title="Play / pause">${r.playing ? I.pause : I.play}</button><button data-r="next" title="Next station">${I.fwd}</button><button data-r="stop" title="Stop (Esc)">${I.x}</button>`;
-  const text = prev ? `${spoken(prev)}, then ${spoken(cur)}` : `${r.L.label}. Starts at ${spoken(cur)}`;
-  r.voiceEnd = voice.on && speak(text, 1, () => { if (ride === r) r.voiceEnd = r.t; }) ? Infinity : null;
+  if (!fromVoice) narrateRide(r);
   flyToStation(r.S, cur, clamp(camPos.distanceTo(controls.target), 12, 22), i ? 1.1 : 1.4);
+}
+
+// The rest of the ride is one utterance that moves the stations itself (no audio pop between them).
+function narrateRide(r) {
+  const texts = r.L.trunk.map((st, k) => (k ? `then ${spoken(st)}` : `${r.L.label}. Starts at ${spoken(st)}`));
+  const ok = voice.on && speakFlow(texts, r.i, 1, (k) => { if (ride === r) gotoStation(k, true); },
+    (why) => { if (ride !== r) return; if (why === 'fallback') narrateRide(r); else r.voiceEnd = r.t; });
+  r.voiceEnd = ok || (voice.on && speak(texts[r.i], 1, () => { if (ride === r) r.voiceEnd = r.t; })) ? Infinity : null;
 }
 
 function updateRide(dt) {
