@@ -50,6 +50,7 @@ export const I = {
   flag: ic('<path d="M5 21V4.5M5 4.5h11.5l-2.2 4 2.2 4H5"/>'),
   env: ic('<rect x="3" y="4.5" width="18" height="15" rx="3"/><path d="m7 10 3 2.5L7 15M12.5 15h4.5"/>'),
   config: ic('<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>'),
+  focus: ic('<circle cx="12" cy="12" r="3"/><path d="M3 8V5.5A2.5 2.5 0 0 1 5.5 3H8M16 3h2.5A2.5 2.5 0 0 1 21 5.5V8M21 16v2.5a2.5 2.5 0 0 1-2.5 2.5H16M8 21H5.5A2.5 2.5 0 0 1 3 18.5V16"/>'),
   states: ic('<rect x="2.5" y="9" width="7" height="6" rx="3"/><rect x="14.5" y="9" width="7" height="6" rx="3"/><path d="M9.5 12h5M12.5 10l2 2-2 2"/>'),
 };
 // Colours for code-structure items (methods, functions, types).
@@ -267,7 +268,7 @@ export function openPanel() { detail.classList.add('open'); document.body.classL
 export function closeDetail() { detail.classList.remove('open'); document.body.classList.remove('detail-open'); codeslot.innerHTML = ''; }
 
 export function flowHtml(id, f) {
-  return `<div class="flow" data-flow="${esc(id)}"><div class="fh"><button class="play" data-play="${esc(id)}" title="Play">${I.play}</button><div class="t"><b>${esc(f.title)}</b><small>${esc(f.trigger || '')}</small></div></div>
+  return `<div class="flow" data-flow="${esc(id)}"><div class="fh"><button class="play" data-play="${esc(id)}" title="Play">${I.play}</button><div class="t"><b>${esc(f.title)}</b><small>${esc(f.trigger || '')}</small></div><button class="play fx" data-fflow="${esc(id)}" title="Focus: show only what this flow touches">${I.focus}</button></div>
     <ol>${(f.steps || []).map((s, i) => `<li data-step="${i}" data-sref="${esc(s.ref || '')}"><span class="tx">${esc(s.text)}${s.ref && state.M.code?.[s.ref]?.verified === false ? ' <span class="unv" title="code ref not verified">⚠</span>' : ''}</span><span class="who">${esc(s.from)} → ${esc(s.to)}</span></li>`).join('')}</ol></div>`;
 }
 
@@ -282,7 +283,8 @@ export function showDetail(ent) {
   if (ent.type === 'part') {
     const p = parts.get(ent.id), k = kindOf(p), ch = state.M.changes?.[p.id];
     h = head(pill(p.kind, KINDS[k].color) + pill(p.clusterObj.name, p.clusterObj.color, 'soft') + (ch ? pill(`Δ${ch} files`, 'var(--heat)') : ''), p.name, `${esc(p.path || '')}${p.size ? ` · ${p.size} lines` : ''}`) +
-      `<p class="lead">${esc(p.summary)}</p>${p.details ? `<p class="dim">${esc(p.details)}</p>` : ''}`;
+      `<p class="lead">${esc(p.summary)}</p>${p.details ? `<p class="dim">${esc(p.details)}</p>` : ''}` +
+      `<div class="ctl"><button class="btn tinted" data-fpart="${esc(p.id)}" title="Show only what this part touches">${I.focus}Focus</button></div>`;
     if ((p.exposes || []).length) h += sec('Entry points', p.exposes.map((e) => { const t = PORTS[e.type] || PORTS.function; return `<div class="item"><span class="pt" style="--c:${t.color}">${t.label}</span><div class="t"><b>${esc(e.what)}</b>${rf(e.ref)}</div></div>`; }).join(''), p.exposes.length);
     if ((p.uses || []).length) h += sec('Uses', p.uses.map((u) => { const known = parts.has(u.target) || exts.has(u.target); return row(I.outArrow, `<b>${known ? goLink(u.target) : esc(u.target)}</b> <small>${esc(u.how)}</small>`, rf(u.ref), 'var(--cyan)'); }).join(''), p.uses.length);
     if ((p.publishes || []).length || (p.subscribes || []).length) h += sec('Events', `<div class="chips">${(p.publishes || []).map((t) => `<span class="chip">${I.radio}pub ${esc(t)}</span>`).join('')}${(p.subscribes || []).map((t) => `<span class="chip sub">${I.inArrow}sub ${esc(t)}</span>`).join('')}</div>`);
@@ -617,12 +619,12 @@ export function drawMini() {
 
 export function buildSearch() {
   state.searchItems = [];
-  for (const p of parts.values()) state.searchItems.push({ ty: p.kind, name: p.name, sub: `${p.id} · ${p.clusterObj.name} — ${p.summary || ''}`, go: () => dive({ type: 'part', id: p.id }) });
+  for (const p of parts.values()) state.searchItems.push({ ty: p.kind, name: p.name, sub: `${p.id} · ${p.clusterObj.name} — ${p.summary || ''}`, go: () => dive({ type: 'part', id: p.id }), feature: { part: p.id } });
   for (const c of clusters.values()) if (c.shell) state.searchItems.push({ ty: 'domain', name: c.name, sub: c.summary, go: () => dive({ type: 'cluster', id: c.id }) });
   for (const d of docks.values()) state.searchItems.push({ ty: 'systems', name: d.name, sub: `${d.members.length} outside systems`, go: () => dive({ type: 'dock', id: d.id }) });
   for (const e of exts.values()) state.searchItems.push({ ty: e.kind || 'ext', name: e.id, sub: `external · used by ${e.users.size}`, go: () => dive({ type: 'external', id: e.id }) });
-  (state.M.systemFlows || []).forEach((f, i) => state.searchItems.push({ ty: 'flow', name: f.title, sub: 'system flow', go: () => playFlow(`system#${i}`) }));
-  for (const p of parts.values()) (p.flows || []).forEach((f, i) => state.searchItems.push({ ty: 'flow', name: f.title, sub: `${p.name} · ${f.trigger || ''}`, go: () => playFlow(`${p.id}#${i}`) }));
+  (state.M.systemFlows || []).forEach((f, i) => state.searchItems.push({ ty: 'flow', name: f.title, sub: 'system flow', go: () => playFlow(`system#${i}`), feature: { flow: `system#${i}` } }));
+  for (const p of parts.values()) (p.flows || []).forEach((f, i) => state.searchItems.push({ ty: 'flow', name: f.title, sub: `${p.name} · ${f.trigger || ''}`, go: () => playFlow(`${p.id}#${i}`), feature: { flow: `${p.id}#${i}` } }));
   for (const n of nodes) if (n.type === 'fn') state.searchItems.push({ ty: 'func', name: n.name, sub: `${n.owner.name} · ${n.owner.flows[n.flow].title}`, go: () => dive(entFromNode(n)) });
   initGateList();
 }
@@ -655,7 +657,7 @@ export function renderResults() {
   const q = $('#q').value.trim();
   $('#results').innerHTML = !q ? '' : !state.results.length ? `<div class="empty">No results for “${esc(q)}”</div>` : state.results.map((r, i) => {
     const [icon, color, label] = resultLook(r.ty);
-    return `<div data-i="${i}" class="res${i === state.rIdx ? ' on' : ''}"><span class="ri" style="--k:${color}">${icon}</span><span class="rt"><span class="nm">${esc(r.name)}</span><span class="sb">${esc(r.sub)}</span></span><span class="ty">${esc(label)}</span>${i === state.rIdx ? '<kbd>↵</kbd>' : ''}</div>`;
+    return `<div data-i="${i}" class="res${i === state.rIdx ? ' on' : ''}"><span class="ri" style="--k:${color}">${icon}</span><span class="rt"><span class="nm">${esc(r.name)}</span><span class="sb">${esc(r.sub)}</span></span><span class="ty">${esc(label)}</span>${i === state.rIdx && r.feature ? `<button class="rfx" data-feat title="Focus (⇧↵)">${I.focus}Focus</button>` : ''}${i === state.rIdx ? '<kbd>↵</kbd>' : ''}</div>`;
   }).join('');
   $('#results').querySelector('.on')?.scrollIntoView({ block: 'nearest' });
   $('#search').classList.toggle('has', !!q);
@@ -779,6 +781,7 @@ export function initDetailPanel() {
     const r = t.closest('[data-ref]'); if (r) return openCode(r.dataset.ref);
     const g = t.closest('[data-go]'); if (g) return act({ type: 'focus', id: g.dataset.go });
     const pl = t.closest('[data-play]'); if (pl) return playFlow(pl.dataset.play);
+    const fx = t.closest('[data-fflow],[data-fpart]'); if (fx) return act({ type: 'feature', flow: fx.dataset.fflow, part: fx.dataset.fpart });
     const sb = t.closest('[data-struct]');
     if (sb) { const S = parts.get(sb.dataset.struct).struct; const d = new V3().subVectors(camPos, S.group.position); if (S.depth < 0.05) setFacing(S, Math.atan2(d.x, d.z)); return flyToBoard(S); }
     if (t.closest('[data-tests]')) { state.showTests = t.checked; for (const S of [...structs.values()]) { const p = S.part; disposeStruct(S); buildStruct(p); } return; }
@@ -827,16 +830,16 @@ export function initSearch() {
   q.replaceWith(bar);
   bar.innerHTML = I.search; bar.append(q);
   bar.insertAdjacentHTML('beforeend', '<kbd>esc</kbd>');
-  $('#search').insertAdjacentHTML('beforeend', '<div class="sfoot"><span><kbd>↑</kbd><kbd>↓</kbd> navigate</span><span><kbd>↵</kbd> open</span><span><kbd>esc</kbd> close</span></div>');
+  $('#search').insertAdjacentHTML('beforeend', '<div class="sfoot"><span><kbd>↑</kbd><kbd>↓</kbd> navigate</span><span><kbd>↵</kbd> open</span><span><kbd>⇧↵</kbd> focus</span><span><kbd>esc</kbd> close</span></div>');
   $('#results').addEventListener('mousemove', (e) => { const d = e.target.closest('[data-i]'); if (d && +d.dataset.i !== state.rIdx) { state.rIdx = +d.dataset.i; renderResults(); } });
   $('#q').addEventListener('input', runSearch);
   $('#q').addEventListener('keydown', (e) => {
     if (e.key === 'ArrowDown') { state.rIdx = Math.min(state.results.length - 1, state.rIdx + 1); renderResults(); e.preventDefault(); }
     else if (e.key === 'ArrowUp') { state.rIdx = Math.max(0, state.rIdx - 1); renderResults(); e.preventDefault(); }
-    else if (e.key === 'Enter' && state.results[state.rIdx]) { const r = state.results[state.rIdx]; closeSearch(); r.go(); }
+    else if (e.key === 'Enter' && state.results[state.rIdx]) { const r = state.results[state.rIdx]; closeSearch(); if (e.shiftKey && r.feature) act({ type: 'feature', ...r.feature }); else r.go(); }
     else if (e.key === 'Escape') { closeSearch(); e.stopPropagation(); }
   });
-  $('#results').onclick = (e) => { const d = e.target.closest('[data-i]'); if (d) { const r = state.results[+d.dataset.i]; closeSearch(); r.go(); } };
+  $('#results').onclick = (e) => { const d = e.target.closest('[data-i]'); if (d) { const r = state.results[+d.dataset.i]; closeSearch(); if (e.target.closest('[data-feat]')) act({ type: 'feature', ...r.feature }); else r.go(); } };
   $('#q').addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== $('#q')) closeSearch(); }, 150));
 }
 

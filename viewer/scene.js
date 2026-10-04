@@ -620,7 +620,7 @@ export function updateLOD(dt) {
     p.node.alpha = (0.6 + 0.4 * c.open) * vis * dim * crowd * (1 - 0.55 * p.unfold) * (p === fp ? 1 - 0.92 * fpD : 1);
     p.label.want = smooth(0.35, 0.75, c.open) * (1 - smooth(Math.max(110, c.r * 3.4), Math.max(190, c.r * 4.6), p.dist)) * vis * (state.emph ? (state.emph.has(p.id) ? 1 : 0.25) : 1) * (fp && fp !== p ? (1 - 0.75 * fpU) * (1 - fpD) : 1);
     p.label.boost = p === fp ? 40 * fpU : (state.selected && state.selected.id === p.id ? 30 : 0);
-    if (player.on && !player.part && state.emph.has(p.id)) { p.node.alpha = vis; p.label.want = vis; p.label.boost = state.activeKeys.has(p.id) ? 80 : 20; }
+    if (((player.on && !player.part) || (state.feature && !fp)) && state.emph?.has(p.id)) { p.node.alpha = vis; p.label.want = vis; p.label.boost = state.activeKeys.has(p.id) ? 80 : 20; }
     if (p === hp) { p.label.want = Math.max(p.label.want, vis); p.label.boost = 90; }
     p.sumLabel.want = (p === hp || p === selPart || (p === fp && fpU > 0.3)) ? p.label.want * (1 - fpD) : 0;
     p.sumLabel.boost = p.label.boost;
@@ -656,12 +656,12 @@ export function updateLOD(dt) {
   }
   for (const e of exts.values()) {
     const dim = dimOf(e.id), near = e.dock.near;
-    const related = (hp && hp.neighbors.has(e.id)) || (state.emph && state.emph.has(e.id) && (state.selected || player.on)) ? 1 : 0;
+    const related = (hp && hp.neighbors.has(e.id)) || (state.emph && state.emph.has(e.id) && (state.selected || player.on || state.feature)) ? 1 : 0;
     const fpRel = fp && fp.neighbors.has(e.id) ? fpU : 0;
     e.node.alpha = Math.max(0.2 + 0.7 * near, related, fpRel * (1 - fpD)) * dim;
     e.label.want = Math.max(near, related, fpRel * (1 - fpD)) * dim;
     e.label.boost = state.activeKeys.has(e.id) ? 80 : related ? 30 : 0;
-    e.node.hot = !!(state.emph && state.emph.has(e.id) && (state.selected || player.on));
+    e.node.hot = !!(state.emph && state.emph.has(e.id) && (state.selected || player.on || state.feature));
   }
   for (const L of state.M._links) {
     const a = L.a, b = L.b, vis = kindOn[kindOf(a)] && (L.toExt || kindOn[kindOf(b)]) ? 1 : 0;

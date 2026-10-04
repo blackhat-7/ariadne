@@ -1,9 +1,10 @@
 // main.js
 // Exports: (none: entry point)
-// Imports: state: state | board: initBoard, loadStructures | review: initReview | routes: buildRoutes, updateRoutes | nav: initNav | chat: initChat, initSettings, loadAgents, probeChat | drawer: closeDrawer, closePop, drawer, gpop, initCodeBrowser, initCodeLink, openFinder, overlay, probeCodeApi, updateBeacon | hud: buildLegend, buildSearch, drawMini, initBreadcrumb, initDetailPanel, initHoverCard, initLabels, initLegend, initMinimap, initResizablePanels, initSearch, level, openCode, openSearch, setKinds, stepOut, updateCrumbs, updateHover, updateLabels | scene: LOW, build, camPos, camera, clusters, composer, controls, exts, findEnt, fly, flyOverview, flyToEnt, initCameraFlight, initFlowPlayback, initLod, initNavigation, initPicking, initShaders, initState, initThreeSetup, initWorldModel, kindOn, parts, playFlow, player, renderer, select, setEmphasis, setResolution, stopFlow, uTime, updateFly, updateLOD, updatePlayer, updateViewOffset | theme: initVocabulary | util: $, esc, initUtil | voice: initVoice
+// Imports: state: state | board: initBoard, loadStructures | feature: escFeature, focusFeature, initFeature, keepFeature | review: initReview | routes: buildRoutes, updateRoutes | nav: initNav | chat: initChat, initSettings, loadAgents, probeChat | drawer: closeDrawer, closePop, drawer, gpop, initCodeBrowser, initCodeLink, openFinder, overlay, probeCodeApi, updateBeacon | hud: buildLegend, buildSearch, drawMini, initBreadcrumb, initDetailPanel, initHoverCard, initLabels, initLegend, initMinimap, initResizablePanels, initSearch, level, openCode, openSearch, setKinds, stepOut, updateCrumbs, updateHover, updateLabels | scene: LOW, build, camPos, camera, clusters, composer, controls, exts, findEnt, fly, flyOverview, flyToEnt, initCameraFlight, initFlowPlayback, initLod, initNavigation, initPicking, initShaders, initState, initThreeSetup, initWorldModel, kindOn, parts, playFlow, player, renderer, select, setEmphasis, setResolution, stopFlow, uTime, updateFly, updateLOD, updatePlayer, updateViewOffset | theme: initVocabulary | util: $, esc, initUtil | voice: initVoice
 import * as THREE from 'three';
 import { state } from './state.js';
 import { initBoard, loadStructures } from './board.js';
+import { escFeature, focusFeature, initFeature, keepFeature } from './feature.js';
 import { initChat, initSettings, loadAgents, probeChat } from './chat.js';
 import { closeDrawer, closePop, drawer, gpop, initCodeBrowser, initCodeLink, openFinder, overlay, probeCodeApi, updateBeacon } from './drawer.js';
 import { buildLegend, buildSearch, drawMini, initBreadcrumb, initDetailPanel, initHoverCard, initLabels, initLegend, initMinimap, initResizablePanels, initSearch, level, openCode, openSearch, setKinds, stepOut, updateCrumbs, updateHover, updateLabels } from './hud.js';
@@ -30,6 +31,7 @@ export function act(a) {
   switch (a.type) {
     case 'focus': { const ent = findEnt(a.id); if (!ent) return false; if (player.on) stopFlow(); select(ent); flyToEnt(ent); return true; }
     case 'play': return playFlow(a.flow);
+    case 'feature': return focusFeature(a);
     case 'highlight': {
       const ids = (a.ids || []).filter((id) => parts.has(id) || exts.has(id) || clusters.has(id));
       if (!ids.length) { setEmphasis(null); return true; }
@@ -54,6 +56,7 @@ export function frame(now) {
   if (document.hidden) { clock.getDelta(); drewLast = false; return; }
   const dt = Math.min(clock.getDelta(), 0.1);
   uTime.value += dt;
+  keepFeature();
   updateFly(dt);
   updateViewOffset(dt);
   controls.enabled = !fly.on;
@@ -111,7 +114,7 @@ function initKeyboard() {
     else if (e.key === 'Escape') {
       if (gpop.classList.contains('open')) closePop();
       else if (drawer.classList.contains('open')) closeDrawer();
-      else if (player.on) stopFlow(); else stepOut();
+      else if (player.on) stopFlow(); else if (!escFeature()) stepOut();
     }
     else if (player.on && e.key === ' ') { e.preventDefault(); $('#fbplay').click(); }
     else if (player.on && e.key === 'ArrowRight') $('#fbnext').click();
@@ -176,6 +179,7 @@ initBreadcrumb();
 initMinimap();
 initSearch();
 initLegend();
+initFeature();
 initSettings();
 initVoice();
 initChat();
