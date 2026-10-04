@@ -55,6 +55,7 @@ The chosen CLI runs read-only in the repo with the map and the action protocol i
 - `{"type": "focus", "id": "<part|cluster|external id>"}` fly there
 - `{"type": "play", "flow": "<partId>#<index>" | "system#<index>"}` play a flow
 - `{"type": "highlight", "ids": [...]}` highlight these, dim the rest
+- `{"type": "feature", "flow": "<partId>#<index>" | "system#<index>"}` or `{"type": "feature", "part": "<partId>"}` feature focus: show only what it touches (parts, data stores, outside services, code), with a summary card; Esc leaves
 - `{"type": "filter", "kinds": ["service","job","library","tool"]}`
 - `{"type": "overview"}`
 - `{"type": "code", "ref": "path:line"}` open the code

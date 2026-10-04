@@ -737,6 +737,8 @@ holding a JSON array (use [] when nothing fits); never write the JSON anywhere e
 - {"type":"focus","id":"<part, cluster or external id>"}   fly the camera there
 - {"type":"play","flow":"<partId>#<index>"} or {"type":"play","flow":"system#<index>"}   play a flow
 - {"type":"highlight","ids":["<id>", ...]}   glow these, dim the rest ([] clears)
+- {"type":"feature","flow":"<partId>#<index>" or "system#<index>"} or {"type":"feature","part":"<part id>"}
+  show only what that feature touches, with a summary card (best for "what does X involve")
 - {"type":"filter","kinds":["service","job","library","tool"]}   show only these kinds
 - {"type":"overview"}   fly back out to the whole system
 - {"type":"code","ref":"<repo path:line>"}   open the code panel at any file and line in the repo
@@ -781,6 +783,7 @@ def is_repo_ref(repo, ref):
 def valid_actions(raw, m, repo):
     ids = ({p["id"] for p in m.get("parts", [])} | {c["id"] for c in m.get("clusters", [])}
            | {e["id"] for e in m.get("externals", [])})
+    parts = {p["id"] for p in m.get("parts", [])}
     flows = {f"{p['id']}#{i}" for p in m.get("parts", []) for i in range(len(p.get("flows", [])))}
     flows |= {f"system#{i}" for i in range(len(m.get("systemFlows", [])))}
     out = []
@@ -790,6 +793,10 @@ def valid_actions(raw, m, repo):
             out.append({"type": t, "id": a["id"]})
         elif t == "play" and a.get("flow") in flows:
             out.append({"type": t, "flow": a["flow"]})
+        elif t == "feature" and a.get("flow") in flows:
+            out.append({"type": t, "flow": a["flow"]})
+        elif t == "feature" and a.get("part") in parts:
+            out.append({"type": t, "part": a["part"]})
         elif t == "highlight" and isinstance(a.get("ids"), list):
             keep = [i for i in a["ids"] if i in ids]
             if keep or not a["ids"]:
@@ -840,6 +847,7 @@ def chat(body, map_path, repo):
 def describe(action):
     t = action["type"]
     return {"focus": f"Showing {action.get('id')}", "play": f"Playing flow {action.get('flow')}",
+            "feature": f"Focusing on {action.get('flow') or action.get('part')}",
             "code": f"Opening `{action.get('ref')}`", "overview": "Back to the overview",
             "highlight": "Highlighting " + ", ".join(action.get("ids", [])),
             "filter": "Showing only " + ", ".join(action.get("kinds", []))}.get(t, t)
