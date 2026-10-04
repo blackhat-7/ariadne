@@ -1,6 +1,6 @@
 // scene.js
 // Exports: LOW, setResolution, solidMats, shadowMat, lineRes, spinTime, bgColor, fatLoop, slab, stage, renderer, scene, camera, controls, rt, composer, bloom, uTime, nodeMats, ATLAS, CELL, atlasCv, atlasCtx, atlasCells, LUCIDE, atlasTex, atlasCell, iconMat, lineMat, tubeMat, shellMat, LineSet, curve, parts, clusters, exts, docks, nodes, nodeByKey, meshes, linkSet, trackSet, streams, at, merge, G, SHAPES, AMBER, addNode, shapeOfPart, partScale, build, buildDetail, kindOn, recolor, setEmphasis, markReview, dimOf, camPos, updateLOD, fly, fv, flyTo, updateViewOffset, updateFly, flyOverview, flyToEnt, resolveEnt, entFromNode, findEnt, select, labelOf, dive, ray, ndc, pick, entFromEvent, player, MOVE, STEP, pulseTex, pulse, trailGeo, trail, flowById, actorPos, actorKey, playFlow, gotoStep, stopFlow, pv, updatePlayer, isMac, isTrackpad, navPlane, navP, navN, navR, navU, zoomAt, panBy, gestureOpts, initThreeSetup, initShaders, initWorldModel, initState, initLod, initCameraFlight, initPicking, initFlowPlayback, initNavigation
-// Imports: state: state | nav: remember | board: boardNear, flyToBoard, openLens, setFacing, updateStructs | drawer: codeHtml, drawer, openFile | hud: Label, closeDetail, detail, hoverEl, openCode, showDetail | theme: EXT, KINDS, PORTS, QUALITY, THEME, VOXEL, extOf, kindOf | util: $, V3, clamp, ease, esc, hashStr, rng, smooth | voice: cancelSpeech, pauseSpeech, renderVoiceButton, resumeSpeech, speak, stepSpeech, voice | voxel: BOX, CUBE, RING, followSun, refreshShadows, setVoxAlpha, setVoxHot, setupVoxel, uWorld, voxCart, voxIsland, voxMesh, voxNode | voxels: cart, externalModel, partModel
+// Imports: state: state | nav: remember | board: boardNear, flyToBoard, openLens, setFacing, updateStructs | drawer: codeHtml, drawer, openFile | hud: Label, closeDetail, detail, hoverEl, openCode, showDetail | links: STYLE, entryOf, linkKind, streamKind, streamText | theme: EXT, KINDS, PORTS, QUALITY, THEME, VOXEL, extOf, kindOf | util: $, V3, clamp, ease, esc, hashStr, rng, smooth | voice: cancelSpeech, pauseSpeech, renderVoiceButton, resumeSpeech, speak, stepSpeech, voice | voxel: BOX, CUBE, RING, followSun, refreshShadows, setVoxAlpha, setVoxHot, setupVoxel, uWorld, voxCart, voxIsland, voxMesh, voxNode | voxels: cart, externalModel, partModel
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -21,6 +21,7 @@ import { Label, closeDetail, detail, hoverEl, openCode, showDetail } from './hud
 import { EXT, KINDS, PORTS, QUALITY, THEME, VOXEL, extOf, kindOf, mute } from './theme.js';
 import { $, V3, clamp, ease, esc, hashStr, reducedMotion, rng, smooth, spring } from './util.js';
 import { cancelSpeech, pauseSpeech, renderVoiceButton, resumeSpeech, speak, speakFlow, stepSpeech, voice } from './voice.js';
+import { STYLE, entryOf, linkKind, streamKind, streamText } from './links.js';
 import { BOX, CUBE, RING, followSun, refreshShadows, setVoxAlpha, setVoxHot, setupVoxel, uWorld, voxCart, voxIsland, voxMesh, voxNode } from './voxel.js';
 import { cart, externalModel, partModel } from './voxels.js';
 
@@ -48,13 +49,14 @@ export function atlasCell(name) {
 
 /* ---------------- line set (one fat-line geometry, many polylines; per-segment alpha and pulse) ---------------- */
 export class LineSet {
-  constructor(speed, spacing, base) { this.pos = []; this.d = []; this.col = []; this.items = []; this.hot = 0; this.mat = lineMat(speed, spacing, base); }
-  add(points, color, owner) {
+  constructor(speed, spacing, base) { this.pos = []; this.d = []; this.col = []; this.st = []; this.items = []; this.hot = 0; this.mat = lineMat(speed, spacing, base); }
+  // style (links.js STYLE): 0 solid, 1 dashed, 2 dotted, 3 fades in from its start
+  add(points, color, owner, style = 0) {
     const start = this.pos.length / 6; let acc = 0;
     for (let i = 0; i < points.length - 1; i++) {
       const a = points[i], b = points[i + 1], l = a.distanceTo(b);
       this.pos.push(a.x, a.y, a.z, b.x, b.y, b.z); this.d.push(acc, acc + l); acc += l;
-      this.col.push(color.r, color.g, color.b, color.r, color.g, color.b);
+      this.col.push(color.r, color.g, color.b, color.r, color.g, color.b); this.st.push(style);
     }
     const it = { start, count: this.pos.length / 6 - start, alpha: -1, pulse: -1, color, owner };
     this.items.push(it); return it;
@@ -63,10 +65,11 @@ export class LineSet {
     const g = new LineSegmentsGeometry(), n = this.pos.length / 6;
     g.setPositions(this.pos); g.setColors(this.col);
     g.setAttribute('instanceD', new THREE.InstancedBufferAttribute(new Float32Array(this.d), 2));
+    g.setAttribute('instanceStyle', new THREE.InstancedBufferAttribute(new Float32Array(this.st), 1));
     this.alphaAttr = new THREE.InstancedBufferAttribute(new Float32Array(n), 1); this.alphaAttr.setUsage(THREE.DynamicDrawUsage); g.setAttribute('instanceAlpha', this.alphaAttr);
     this.pulseAttr = new THREE.InstancedBufferAttribute(new Float32Array(n), 1); this.pulseAttr.setUsage(THREE.DynamicDrawUsage); g.setAttribute('instancePulse', this.pulseAttr);
     this.obj = new LineSegments2(g, this.mat); this.obj.frustumCulled = false; scene.add(this.obj);
-    this.pos = this.d = this.col = null;
+    this.pos = this.d = this.col = this.st = null;
   }
   setAlpha(it, a, pulse = 0) {
     a = Math.round(a * 200) / 200;
@@ -251,7 +254,7 @@ export function build() {
       c.shell = voxIsland(hashStr(c.id), c.r * 1.08, c.color, c.pos.x, c.pos.z, c.plateY); scene.add(c.shell);
     } else glassPlate(c, floorY);
     const top = new V3(c.pos.x, c.plateY, c.pos.z + c.r * 1.05);
-    c.label = new Label(`<b>${esc(c.name)}</b><i>${c.parts.length} parts</i>`, 'lb-cluster', top, 100, { style: `--c:${c.color}`, ent: { type: 'cluster', id: c.id }, mode: 'below', dy: 6 });
+    c.label = new Label(`<b>${esc(c.name)}</b>${c.summary ? `<span>${esc(c.summary)}</span>` : ''}<i>${c.parts.length} parts</i>`, 'lb-cluster', top, 100, { style: `--c:${c.color}`, ent: { type: 'cluster', id: c.id }, mode: 'below', dy: 6 });
     const out = new V3(c.pos.x, 0, c.pos.z).normalize(); if (!out.lengthSq()) out.set(0, 0, 1);
     c.tag = new Label(esc(c.name), 'lb-ctag', new V3(c.pos.x + out.x * c.r, c.pos.y - 3, c.pos.z + out.z * c.r), 45, { style: `--c:${c.color}`, mode: 'center', ent: { type: 'cluster', id: c.id } });
   }
@@ -282,20 +285,55 @@ export function build() {
   // ---- part details: ports, flow arcs, proxies, uses labels ----
   for (const p of parts.values()) buildDetail(p);
 
-  // ---- links (part level) ----
-  const white = new THREE.Color(THEME.link);
+  // ---- links (part level): style = kind, a small cone at the callee end = direction ----
+  const white = new THREE.Color(THEME.link), arrows = [];
+  const line = (crv, n, col, owner, style, back, scale = 1) => {
+    const it = linkSet.add(crv.getPoints(n), col, owner, style), u = clamp(1 - back / crv.getLength(), 0, 1);
+    arrows.push({ it, pos: crv.getPointAt(u), dir: crv.getTangentAt(u), scale, color: col }); return it;
+  };
+  // where a link to another domain crosses this one's rim, facing the other domain
+  const rim = (c, o) => { const d = new V3(o.pos.x - c.pos.x, 0, o.pos.z - c.pos.z).normalize(); return new V3(c.pos.x + d.x * c.r * 1.02, c.pos.y, c.pos.z + d.z * c.r * 1.02); };
+  const exits = new Map();
+  const exit = (c, o, dir) => {
+    const k = c.id + '|' + o.id;
+    if (!exits.has(k)) exits.set(k, { c, o, dirs: new Set(), pos: rim(c, o).lerp(c.pos, -0.1) });
+    exits.get(k).dirs.add(dir);
+  };
   for (const L of links) {
-    const a = L.a.pos, b = L.b.pos;
+    const a = L.a.pos, b = L.b.pos, back = L.b.r * 1.15 + 0.5;
+    L.kind = linkKind(L);
     const crv = curve(a, b, L.toExt ? 0.08 : 0.18, 0.06);
     const col = L.toExt ? new THREE.Color(EXT[extOf(L.b)].color).lerp(white, 0.25) : white;
-    L.item = linkSet.add(crv.getPoints(L.toExt ? 24 : 14), col, L);
+    L.item = line(crv, L.toExt ? 24 : 14, col, L, STYLE[L.kind], back);
     const t = L.toExt ? Math.min(0.5, (L.a.r + 7) / a.distanceTo(b)) : 0.5;
     L.label = new Label(esc(L.how || ''), L.toExt ? 'lb-use' : 'lb-link', crv.getPoint(t), L.toExt ? 30 : 16, { mode: 'center' });
+    // across domains: inside each domain a stub runs to the rim, where a label names the other domain
+    const ca = L.a.clusterObj, cb = L.toExt ? null : L.b.clusterObj;
+    if (cb && ca !== cb) {
+      exit(ca, cb, 'out'); exit(cb, ca, 'in');
+      L.stubA = line(curve(a, rim(ca, cb), 0.1, 0), 10, col, L, STYLE[L.kind], 0, 0.9);
+      L.stubB = line(curve(rim(cb, ca), b, 0.1, 0), 10, col, L, STYLE[L.kind], back);
+    }
+  }
+  state.exits = [...exits.values()];
+  for (const x of state.exits) {
+    const arrow = x.dirs.size > 1 ? '↔' : x.dirs.has('out') ? '→' : '←';
+    x.label = new Label(`<em>${arrow}</em>${esc(x.o.name)}`, 'lb-exit', x.pos, 40, { style: `--c:${x.o.color}`, mode: 'center', ent: { type: 'cluster', id: x.o.id } });
+  }
+  // entry points: a line from outside the domain into the part, labelled with who comes in
+  state.entries = [];
+  for (const p of parts.values()) {
+    const who = entryOf(p); if (!who) continue;
+    const c = p.clusterObj, out = new V3(c.pos.x, 0, c.pos.z).normalize(); if (!out.lengthSq()) out.set(0, 0, 1);
+    const from = p.pos.clone().addScaledVector(out, c.r * 1.25 + 8 - new V3().subVectors(p.pos, c.pos).dot(out)); from.y += 2;
+    const it = line(new THREE.LineCurve3(from, p.pos.clone()), 1, new THREE.Color(THEME.accent), { entry: p }, STYLE.entry, p.r * 1.3 + 0.4, 1.25);
+    const label = new Label(`<svg viewBox="0 0 16 16"><path d="M2 8h10M8.5 4.5 12 8l-3.5 3.5"/></svg>${who}`, 'lb-entry', from, 50, { mode: 'center', ent: { type: 'part', id: p.id } });
+    state.entries.push({ p, it, label });
   }
   state.M._links = links;
   linkSet.build(); trackSet.build();
 
-  // ---- cluster streams ----
+  // ---- cluster streams: one tube per domain pair and direction, labelled from its links ----
   const agg = new Map();
   for (const L of links) {
     const ca = L.a.clusterObj, cb = L.toExt ? L.b.dock : L.b.clusterObj;
@@ -311,9 +349,21 @@ export function build() {
     const b = s.to.pos.clone().addScaledVector(dir, -s.to.r * (s.toExt ? 1.05 : 0.92));
     const crv = curve(a, b, s.toExt ? 0.04 : 0.14, 0.07);
     const rad = s.toExt ? 0.18 + 0.1 * Math.sqrt(s.w) : 0.3 + 0.25 * Math.sqrt(s.w);
-    const mat = tubeMat(s.from.color, s.toExt ? EXT[s.to.kind].color : s.to.color, crv.getLength());
-    s.mesh = new THREE.Mesh(new THREE.TubeGeometry(crv, 48, rad, 10, false), mat); scene.add(s.mesh);
+    s.kind = streamKind(s);
+    const to = s.toExt ? EXT[s.to.kind].color : s.to.color;
+    s.mesh = new THREE.Mesh(new THREE.TubeGeometry(crv, 48, rad, 10, false), tubeMat(s.from.color, to, crv.getLength(), STYLE[s.kind])); scene.add(s.mesh);
+    s.label = new Label(esc(streamText(s)), 'lb-stream', crv.getPoint(s.toExt ? 0.78 : 0.5), 70, { style: `--c:${to}`, mode: 'center' });
+    s.alpha = 0; arrows.push({ it: s, pos: crv.getPointAt(0.62), dir: crv.getTangentAt(0.62), scale: 3.5 + 2 * rad, color: new THREE.Color(to), big: true });
     streams.push(s);
+  }
+  // every arrowhead is one instanced cone, its alpha following its line or stream (updateLOD)
+  {
+    const geo = new THREE.ConeGeometry(0.32, 1, 14).translate(0, -0.5, 0), mesh = new THREE.InstancedMesh(geo, solidMats[0], arrows.length);   // tip at the origin
+    const col = new Float32Array(arrows.length * 3), al = new THREE.InstancedBufferAttribute(new Float32Array(arrows.length), 1); al.setUsage(THREE.DynamicDrawUsage);
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new V3(0, 1, 0), sc = new V3();
+    arrows.forEach((r, i) => { r.color.toArray(col, i * 3); mesh.setMatrixAt(i, m4.compose(r.pos, q.setFromUnitVectors(up, r.dir), sc.setScalar(r.scale))); });
+    geo.setAttribute('aColor', new THREE.InstancedBufferAttribute(col, 3)); geo.setAttribute('aAlpha', al);
+    mesh.frustumCulled = false; mesh.userData = { list: arrows, alpha: al }; state.arrowMesh = mesh; scene.add(mesh);
   }
 
   // ---- instanced meshes ----
@@ -620,22 +670,54 @@ export function updateLOD(dt) {
     const touchFp = fp && (a === fp || b === fp);
     const hot = (hp && (a === hp || b === hp)) || (state.emphLinks && state.emphLinks.has(L));
     if (touchFp) al = Math.max(al, 0.2 + 0.45 * fpU); else if (fp) al *= 1 - 0.7 * fpU;
-    if (state.emphLinks && !state.emphLinks.has(L)) al *= 0.08;
     if (hot) al = Math.max(0.7, al);
     al *= vis * (1 - (hot ? 0.8 : 0.9) * fpD);
-    linkSet.setAlpha(L.item, al, hot ? 1 : 0);
+    // zoomed into one end of a cross-domain link: draw its stub to the rim instead of a line into the distance
+    const ex = L.stubA ? Math.abs(oa - ob) : 0;
+    linkSet.setAlpha(L.item, al * (1 - ex) * (!state.emphLinks || hot ? 1 : 0.08), hot ? 1 : 0);
+    if (L.stubA) {   // a stub stays while its own end is emphasised
+      const all = !state.emphLinks || hot;
+      linkSet.setAlpha(L.stubA, al * Math.max(0, oa - ob) * (all || state.emph.has(a.id) ? 1 : 0.08), hot ? 1 : 0);
+      linkSet.setAlpha(L.stubB, al * Math.max(0, ob - oa) * (all || state.emph.has(b.id) ? 1 : 0.08), hot ? 1 : 0);
+    }
     L.label.want = L.toExt
       ? (touchFp ? fpU : 0) * vis * (1 - fpD)
       : (hot ? 1 : 0) * (1 - smooth(90, 160, camPos.distanceTo(L.label.pos))) * vis;
   }
+  for (const x of state.exits) {
+    const o = x.c.open * (1 - x.o.open);
+    x.label.want = smooth(0.5, 0.85, o) * (state.emph && !state.emph.has(x.c.id) && !x.c.parts.some((p) => state.emph.has(p.id)) ? 0.3 : 1) * (1 - 0.6 * fpU) * (1 - fpD);
+  }
+  for (const e of state.entries) {
+    const c = e.p.clusterObj, al = (0.35 + 0.35 * c.open) * (kindOn[kindOf(e.p)] ? 1 : 0) * dimOf(e.p.id) * (fp && fp !== e.p ? 1 - 0.8 * fpU : 1) * (1 - fpD);
+    linkSet.setAlpha(e.it, al, e.p === hp ? 1 : 0);
+    e.label.want = al > 0.05 ? Math.min(1, al * 1.6) * (1 - smooth(state.Rext * 4, state.Rext * 6, camPos.distanceTo(e.label.pos))) : 0;
+  }
+  // Streams: a hovered or selected domain lifts its own streams and names them; the rest step back.
+  const fc = state.hoverEnt?.type === 'cluster' ? clusters.get(state.hoverEnt.id) : hp ? hp.clusterObj : state.selected?.type === 'cluster' ? clusters.get(state.selected.id) : null;
   for (const s of streams) {
     const oa = s.from.open, ob = s.toExt ? 0 : s.to.open;
-    let al = (s.toExt ? 0.3 : 0.55) * (1 - Math.max(oa, ob));
-    const hot = state.emphLinks ? s.hows.some((L) => state.emphLinks.has(L)) : false;
-    if (state.emph) al *= hot ? 1.6 : 0.12;
+    let al = (s.toExt ? 0.22 : 0.55) * (1 - Math.max(oa, ob));
+    const mine = fc && (s.from === fc || s.to === fc);
+    const hot = mine || (state.emphLinks ? s.hows.some((L) => state.emphLinks.has(L)) : false);
+    if (state.emph && !mine) al *= hot ? 1.6 : 0.12;
+    else if (fc) al *= mine ? 1.5 : 0.3;
     const u = s.mesh.material.uniforms;
-    set(u.uAlpha, 'value', al * (1 - fpD)); set(u.uPulse, 'value', hot ? 1 : 0);
+    set(u.uAlpha, 'value', al * (1 - fpD)); set(u.uPulse, 'value', hot ? 1 : 0); s.alpha = u.uAlpha.value;
     if (hot && u.uAlpha.value > 0.004) state.redraw = true;   // the pulse runs
+    s.label.want = hot ? smooth(0.05, 0.2, al) * (1 - fpD) : 0;
+    s.label.boost = mine ? 30 : 0;
+  }
+  // a cone's alpha follows its line (sqrt in the solid shader: square it back)
+  if (state.arrowMesh) {
+    const arr = state.arrowMesh.userData.alpha.array, list = state.arrowMesh.userData.list;
+    let changed = false;
+    for (let i = 0; i < list.length; i++) {
+      const r = list[i], near = r.big ? smooth(25, 70, camPos.distanceTo(r.pos)) : 1;   // a stream's big cone never looms past the camera
+      const a = Math.fround(Math.min(1, Math.max(0, r.it.alpha) ** 2 * 2.2) * near);
+      if (arr[i] !== a) { arr[i] = a; changed = true; }
+    }
+    if (changed) { state.arrowMesh.userData.alpha.needsUpdate = true; state.redraw = true; }
   }
   // per-instance alpha: upload only what changed
   for (const mesh of Object.values(meshes)) {
@@ -1072,20 +1154,23 @@ export function initShaders() {
     Object.assign(m.uniforms, { resolution: { value: lineRes }, uTime, uSpeed: { value: speed }, uSpacing: { value: spacing }, uBase: { value: base } });
     m.onBeforeCompile = (sh) => {
       sh.vertexShader = sh.vertexShader
-        .replace('attribute vec3 instanceColorEnd;', 'attribute vec3 instanceColorEnd;\nattribute vec2 instanceD; attribute float instanceAlpha; attribute float instancePulse;\nvarying float vD; varying float vA; varying float vP;')
-        .replace('void main() {', 'void main() {\nvD = position.y < 0.5 ? instanceD.x : instanceD.y; vA = instanceAlpha; vP = instancePulse;')
+        .replace('attribute vec3 instanceColorEnd;', 'attribute vec3 instanceColorEnd;\nattribute vec2 instanceD; attribute float instanceAlpha; attribute float instancePulse; attribute float instanceStyle;\nvarying float vD; varying float vA; varying float vP; varying float vS;')
+        .replace('void main() {', 'void main() {\nvD = position.y < 0.5 ? instanceD.x : instanceD.y; vA = instanceAlpha; vP = instancePulse; vS = instanceStyle;')
         .replace('offset *= linewidth;', 'offset *= linewidth * (1.0 + 0.7 * instancePulse);')
         .replace('gl_Position = clip;', 'gl_Position = instanceAlpha < 0.004 ? vec4(2.0, 2.0, 2.0, 1.0) : clip;');
       sh.fragmentShader = `
         uniform float opacity; uniform float uTime; uniform float uSpeed; uniform float uSpacing; uniform float uBase;
-        varying vec2 vUv; varying float vD; varying float vA; varying float vP;
+        varying vec2 vUv; varying float vD; varying float vA; varying float vP; varying float vS;
         #include <common>
         #include <color_pars_fragment>
         #include <fog_pars_fragment>
         void main() {
           if (abs(vUv.y) > 1.0) { float a = vUv.x, b = vUv.y > 0.0 ? vUv.y - 1.0 : vUv.y + 1.0; if (a * a + b * b > 1.0) discard; }
-          float pulse = pow(1.0 - fract((uTime * uSpeed - vD) / uSpacing), 9.0) * vP;
-          gl_FragColor = vec4(vColor * (uBase + 2.4 * pulse), vA * opacity);
+          float pulse = pow(1.0 - fract((uTime * uSpeed - vD) / uSpacing), 9.0) * vP, a = vA * opacity;
+          if (vS > 0.5 && vS < 1.5 && fract(vD / 1.5) > 0.55) discard;   // async: dashed
+          if (vS > 1.5 && vS < 2.5 && fract(vD / 0.7) > 0.3) discard;    // data: dotted
+          if (vS > 2.5) a *= smoothstep(0.0, 7.0, vD);                    // entry: comes in from nowhere
+          gl_FragColor = vec4(vColor * (uBase + 2.4 * pulse), a);
           #include <colorspace_fragment>
           #include <fog_fragment>
         }`;
@@ -1144,23 +1229,27 @@ export function initShaders() {
     m.customProgramCacheKey = () => 'glass';
     return m;
   };
-  tubeMat = (ca, cb, len) => new THREE.ShaderMaterial({
-    uniforms: { uTime, uA: { value: new THREE.Color(ca) }, uB: { value: new THREE.Color(cb) }, uLen: { value: len }, uAlpha: { value: 0 }, uPulse: { value: 0 } },
+  /* Domain streams: a soft tube from the caller's colour to the callee's (a cone midway points at the callee);
+     style as for lines: solid call, dashed async, dotted data. */
+  tubeMat = (ca, cb, len, style) => new THREE.ShaderMaterial({
+    uniforms: { uTime, uA: { value: new THREE.Color(ca) }, uB: { value: new THREE.Color(cb) }, uLen: { value: len }, uAlpha: { value: 0 }, uPulse: { value: 0 }, uStyle: { value: style } },
     transparent: true, depthWrite: false,
     vertexShader: `
       varying vec2 vUv; varying vec3 vN; varying vec3 vV;
       void main(){ vUv = uv; vec4 wp = modelMatrix*vec4(position,1.); vN = normalize(mat3(modelMatrix)*normal); vV = normalize(cameraPosition-wp.xyz); gl_Position = projectionMatrix*viewMatrix*wp; }`,
     fragmentShader: `
-      uniform float uTime; uniform vec3 uA; uniform vec3 uB; uniform float uLen; uniform float uAlpha; uniform float uPulse;
+      uniform float uTime; uniform vec3 uA; uniform vec3 uB; uniform float uLen; uniform float uAlpha; uniform float uPulse; uniform float uStyle;
       varying vec2 vUv; varying vec3 vN; varying vec3 vV;
       void main(){
         if (uAlpha < 0.004) discard;
-        float core = pow(abs(dot(normalize(vN), normalize(vV))), 1.6);
-        float p = fract((uTime*22.0 - vUv.x*uLen)/34.0);
+        float core = pow(abs(dot(normalize(vN), normalize(vV))), 1.6), s = vUv.x*uLen;
+        float p = fract((uTime*22.0 - s)/34.0);
         float pulse = pow(1.0 - p, 7.0) * uPulse;
         float ends = smoothstep(0.0, 0.06, vUv.x)*smoothstep(1.0, 0.94, vUv.x);
+        float a = uStyle > 1.5 ? 1.0 - smoothstep(0.3, 0.45, fract(s/2.5))   // data: dots
+                : uStyle > 0.5 ? 1.0 - smoothstep(0.55, 0.62, fract(s/8.0)) : 1.0;     // async: dashes
         vec3 col = mix(uA, uB, vUv.x)*(0.7 + 1.8*pulse);
-        gl_FragColor = vec4(col, uAlpha*core*ends);
+        gl_FragColor = vec4(col, uAlpha*core*ends*a);
       }`,
   });
   shellMat = (color) => new THREE.ShaderMaterial({

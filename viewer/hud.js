@@ -690,6 +690,11 @@ export function buildLegend() {
   const used = new Set([...exts.values()].map(extOf));
   $('#legext').innerHTML = Object.entries(EXT).filter(([k]) => used.has(k)).map(([k, v]) => `<div class="row" style="--k:${v.color}"><img class="shp" src="${ic['ext_' + k]}" alt="">${v.label}</div>`).join('');
   if (!state.M.changes || !Object.keys(state.M.changes).length) $('#chgbtn').style.display = 'none';
+  // link kinds: the same solid / dashed / dotted as the 3D lines and streams (links.js STYLE); the arrowhead marks the callee
+  const sw = (dash, cls = '') => `<svg class="lk ${cls}" viewBox="0 0 24 8"><path d="M1 4h17" stroke-dasharray="${dash}"/><path d="m17 1 4 3-4 3z" class="hd"/></svg>`;
+  $('#leglinks').innerHTML = [[sw(''), 'call'], [sw('3.5 2.5'), 'event / queue'], [sw('0.1 3'), 'reads / writes data'],
+    ['<span class="beam"></span>', 'traffic between groups'], [sw('', 'ent'), 'where traffic enters']]
+    .map(([s, t]) => `<div class="row">${s}${t}</div>`).join('') + '<div class="note">arrow points at who is called · thicker = more · hover a group to name its links</div>';
 }
 
 export function setKinds(kinds) {
