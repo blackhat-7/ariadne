@@ -5,6 +5,8 @@ description = "Turn a codebase into a 3D map you can explore."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
+# Syntax trees for the function x-ray, gates and states (ariadne_xray / ariadne_gates).
+dependencies = ["tree-sitter-language-pack"]
 
 [project.scripts]
 ariadne = "ariadne:main"
@@ -21,3 +23,5 @@ bypass-selection = true
 "ariadne.py" = "ariadne/__init__.py"
 "SCHEMA.md" = "ariadne/SCHEMA.md"
 "viewer" = "ariadne/viewer"
+"ariadne_xray.py" = "ariadne_xray.py"
+"ariadne_gates.py" = "ariadne_gates.py"

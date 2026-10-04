@@ -815,6 +815,7 @@ def name_match(rows, funcs, i, qualifier, name, words):
     return same_dir or (cands if len(cands) == 1 else [])
 
 
+TESTS = re.compile(r"(^|/)(tests?|__tests__|spec|testdata|fixtures?)/|[._-](test|spec)\.[a-z]+$|(^|/)test_[^/]+\.py$")
 GENERATED = re.compile(r"(\.pb\.(go|cc|h)|_pb2(_grpc)?\.py|_grpc\.pb|_gen\.|\.generated\.|/genproto/|/protos?/|/mocks?/|_mock\.)")
 
 
@@ -890,9 +891,10 @@ class Structure:
         db = sqlite3.connect(self.db)
         target = self.repo / folder  # a part is a folder, or a single file
         prefix = str(target) if target.is_file() else str(target).rstrip("/") + "/"
-        rows = db.execute("SELECT qualified_name, kind, name, parent_name, file_path, line_start, line_end, is_test "
-                          "FROM nodes WHERE kind IN ('Class', 'Function', 'Test') AND file_path LIKE ? || '%'",
-                          (prefix,)).fetchall()
+        rows = [r for r in db.execute(
+            "SELECT qualified_name, kind, name, parent_name, file_path, line_start, line_end, is_test "
+            "FROM nodes WHERE kind IN ('Class', 'Function', 'Test') AND file_path LIKE ? || '%'", (prefix,))
+            if not GENERATED.search(r[4])]   # protobuf getters etc. would crowd the metro and the Lens
         index = {r[0]: i for i, r in enumerate(rows)}
         calls, fanin = {}, [0] * len(rows)
         for src, dst in db.execute("SELECT source_qualified, target_qualified FROM edges WHERE kind = 'CALLS' "
@@ -1040,7 +1042,7 @@ class Below:
 
     def __init__(self, repo, files, parts, kinds, structure):
         self.repo, self.parts, self.kinds, self.structure = repo, parts, kinds, structure
-        self.files = [f for f in files if SOURCE.search(f)]
+        self.files = [f for f in files if SOURCE.search(f) and not GENERATED.search(f) and not TESTS.search(f)]
         self.lock, self.all_gates, self.metro = threading.Lock(), None, {}
 
     def module(self, name):
@@ -1073,13 +1075,15 @@ class Below:
             return {"labels": {}, "error": result.get("error", "nothing to explain")}
         fn = result["fn"]
         text = "\n".join(self.source(rel).read_text(errors="replace").splitlines()[fn["start"] - 1:fn["end"]])
+        prompt = mod.explain_prompt(result, text)
+        # keyed on the prompt itself, so a changed function or an improved prompt gets fresh labels
         cache = Path.home() / ".cache" / "ariadne" / "labels" / (
-            hashlib.sha1(f"{rel}\0{text}\0{agent}\0{model}".encode()).hexdigest() + ".json")
+            hashlib.sha1(f"{prompt}\0{agent}\0{model}".encode()).hexdigest() + ".json")
         if cache.exists():
             return {"labels": json.loads(cache.read_text())}
         if model and not MODEL_RE.fullmatch(model):
             raise RuntimeError(f"invalid model name: {model}")
-        labels = mod.parse_labels(ask_agent(agent, model, "", mod.explain_prompt(result, text), self.repo, 300), result)
+        labels = mod.parse_labels(ask_agent(agent, model, "", prompt, self.repo, 300), result)
         cache.parent.mkdir(parents=True, exist_ok=True)
         cache.write_text(json.dumps(labels))
         return {"labels": labels}
