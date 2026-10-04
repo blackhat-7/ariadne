@@ -14,6 +14,8 @@ You need [uv](https://docs.astral.sh/uv/getting-started/installation/) and one c
 uv tool install git+https://github.com/blackhat-7/ariadne
 ```
 
+Update later with `uv tool upgrade ariadne`.
+
 ## Use
 
 ```sh

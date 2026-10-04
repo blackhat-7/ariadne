@@ -1,5 +1,5 @@
 [project]
-name = "ariadne-codemap"
+name = "ariadne"
 version = "0.1.0"
 description = "Turn a codebase into a 3D map you can explore."
 readme = "README.md"
