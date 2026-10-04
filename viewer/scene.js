@@ -392,58 +392,72 @@ function glassPlate(c, floorY) {
   const sh = new THREE.Mesh(floorShadowGeo, floorShadowMat); sh.scale.setScalar(R * 2.8); sh.position.set(c.pos.x, floorY, c.pos.z); sh.renderOrder = -3; scene.add(sh);
 }
 
+// A part's flows read as numbered beads on a ring around it, clockwise from 12 o'clock: the flow's title where it starts,
+// then one bead per step. A flow's driver (the function making most of its calls) is the part itself, so its calls are spokes
+// out from the part; any other call runs from the caller's bead. An entry port whose code is a step's is drawn as that step.
 export function buildDetail(p) {
-  const flows = p.flows || [];
-  const F = Math.max(1, flows.length);
-  const actorsPer = flows.map((f) => { const s = []; for (const st of f.steps || []) for (const a of [st.from, st.to]) if (a && a !== p.id && !s.includes(a)) s.push(a); return s; });
-  const maxA = Math.max(1, ...actorsPer.map((a) => a.length));
-  const rr = Math.max(p.r + 5.5, (F * maxA * 2.6) / (Math.PI * 2 * 0.85));
+  const flows = p.flows || [], slots = flows.reduce((n, f) => n + (f.steps || []).length + 2, 0);   // a flow: its header chip, its steps, a gap
+  const rr = Math.max(p.r + 5.5, (slots * 2.6) / (Math.PI * 2)), slot = (Math.PI * 2) / Math.max(1, slots), y = p.pos.y + 1.5;
   p.ring = rr; p.focusDist = Math.max(26, rr * 3.3);
   p.detailNodes = []; p.detailLabels = []; p.flowInfo = [];
-  const base = -Math.PI / 2 - Math.PI / F * 0.85;
+  const at = (th, r = rr) => new V3(p.pos.x + Math.cos(th) * r, y, p.pos.z + Math.sin(th) * r);
+  const arc = (t0, t1) => Array.from({ length: 7 }, (_, i) => at(t0 + ((t1 - t0) * i) / 6));
+  const short = (s = '', n = 34) => s.length <= n ? s : s.slice(0, s.lastIndexOf(' ', n - 1)).replace(/[\s,.;:]+$/, '') + '…';
+  const ports = new Map((p.exposes || []).filter((e) => e.ref).map((e) => [e.ref, e])), merged = new Set();
+  const track = new THREE.Color(THEME.track);
+  let th = -Math.PI / 2;
   flows.forEach((f, k) => {
-    const actors = actorsPer[k], n = actors.length, map = new Map([[p.id, p.pos]]);
-    const span = (Math.PI * 2 / F) * 0.8;
-    actors.forEach((a, j) => {
-      const th = base + k * (Math.PI * 2 / F) + (n === 1 ? span / 2 : (j / (n - 1)) * span);
-      const pos = new V3(p.pos.x + Math.cos(th) * rr, p.pos.y + 1.5 + k * 1.6 + j * 0.3, p.pos.z + Math.sin(th) * rr);
-      const target = parts.get(a) || exts.get(a);
-      const st = (f.steps || []).find((s) => s.to === a && s.ref) || (f.steps || []).find((s) => s.from === a && s.ref);
-      const key = `${p.id}#${k}:${a}`;
-      let node;
-      if (target) {
-        const color = parts.has(a) ? KINDS[kindOf(target)].color : EXT[extOf(target)].color;
-        node = addNode(key, 'proxy', 'proxy', pos, 0.55, color, { owner: p, flow: k, name: a, ref: st?.ref, target });
-        node.label = new Label(`↗ ${esc(a)}`, 'lb-proxy', new V3(pos.x, pos.y + 0.6, pos.z), 30, { style: `--k:${color}`, ent: { type: 'proxy', key } });
-        node.tether = trackSet.add([pos, target.pos], new THREE.Color(color), p);
-      } else {
-        node = addNode(key, 'fn', 'fn', pos, 0.42, THEME.fnNode, { owner: p, flow: k, name: a, ref: st?.ref, fn: st?.fn });
-        if (st?.ref && state.M.code?.[st.ref]?.verified === false) node.icons.push({ cell: 'warn', scale: 0.75, off: 0.9, color: THEME.amber });
-        node.label = new Label(esc(a), 'lb-fn', new V3(pos.x, pos.y + 0.5, pos.z), 32, { ent: { type: 'fn', key } });
-      }
-      if (node.ref) node.code = new Label(codeHtml(node.ref, 4), 'lb-code', pos, 22, { mode: 'right', dy: 18, ent: { type: 'code', ref: node.ref } });
-      map.set(a, pos); p.detailNodes.push(node); p.detailLabels.push(node.label);
+    const steps = f.steps || [], calls = {};
+    for (const s of steps) calls[s.from] = (calls[s.from] || 0) + 1;
+    const top = Object.keys(calls).reduce((a, b) => (calls[b] > calls[a] ? b : a), steps[0]?.from);
+    const driver = calls[top] >= 2 && calls[top] * 2 >= steps.length ? top : null;
+    const title = new Label(`<i>▶</i>${esc(f.title)}`, 'lb-flow', at(th), 48, { dy: 10, ent: { type: 'flow', id: `${p.id}#${k}` } });
+    const fi = { steps: [], spine: [], title }, beads = [], last = new Map();
+    p.detailLabels.push(title);
+    steps.forEach((s, i) => {
+      fi.spine.push(trackSet.add(arc(th, th + slot), track, p));
+      th += slot;
+      const pos = at(th), key = `${p.id}#${k}.${i}`, target = parts.get(s.to) || exts.get(s.to), into = s.to === driver;
+      const color = target ? (parts.has(s.to) ? KINDS[kindOf(target)].color : EXT[extOf(target)].color) : THEME.fnNode;
+      const node = addNode(key, target ? 'proxy' : 'fn', target ? 'proxy' : 'fn', pos, target ? 0.55 : 0.42, color, { owner: p, flow: k, step: i, name: s.to, ref: s.ref, fn: s.fn, target });
+      if (!target && s.ref && state.M.code?.[s.ref]?.verified === false) node.icons.push({ cell: 'warn', scale: 0.75, off: 0.9, color: THEME.amber });
+      // the call's two ends: this bead, and the part (driver), the caller's latest bead, the bead before, or outside
+      const me = { pos, key }, rim = { pos: at(th, p.r * 0.95), key: p.id };
+      const other = into || s.from === driver ? rim : last.get(s.from) || beads[i - 1] || { pos: at(th, rr + 3.5), key };
+      const [a, b] = into ? [me, rim] : [other, me];
+      const port = ports.get(s.ref), pt = port && (PORTS[port.type] || PORTS.function); if (port) merged.add(port);
+      const free = s.from && s.from !== driver && !last.has(s.from) && (into || !i);   // a caller from outside the ring: name it
+      const tag = pt ? `<span class="pt" style="--c:${pt.color}">${pt.label}</span>` : free ? `<span class="pt">${esc(s.from)}</span>` : '';
+      node.label = new Label(`<i>${i + 1}</i><b>${esc(s.to)}</b>${tag}<small>${esc(short(s.text))}</small>`, target ? 'lb-proxy' : 'lb-fn', pos, 32,
+        { style: `--k:${color}`, dy: 15, ent: { type: target ? 'proxy' : 'fn', key } });
+      if (s.ref) node.code = new Label(codeHtml(s.ref, 4), 'lb-code', pos, 22, { mode: 'below', dy: 44, ent: { type: 'code', ref: s.ref } });
+      // the call itself, unless the ring already draws it (a call from the bead just before)
+      const seg = other === beads[i - 1] ? null : trackSet.add(other === rim ? [a.pos, b.pos] : curve(a.pos, b.pos, 0.2, 0).getPoints(16), track, p);
+      fi.steps.push({ a: a.pos, b: b.pos, ka: a.key, kb: b.key, seg });
+      beads.push(me); if (!into) last.set(s.to, me);
+      p.detailNodes.push(node); p.detailLabels.push(node.label);
     });
-    const segs = [];
-    for (const st of f.steps || []) {
-      const a = map.get(st.from), b = map.get(st.to);
-      if (a && b && a !== b) segs.push(trackSet.add([a, b], new THREE.Color(THEME.track), p));
-    }
-    const first = map.get(actors[0]) || p.pos;
-    const tl = new Label(`▶ ${esc(f.title)}`, 'lb-flow', new V3(first.x, first.y + 1.8, first.z), 40, { ent: { type: 'flow', id: `${p.id}#${k}` } });
-    p.detailLabels.push(tl);
-    p.flowInfo.push({ map, segs, title: tl });
+    th += slot * 2;
+    p.flowInfo.push(fi);
   });
-  (p.exposes || []).forEach((e, i, arr) => {
-    const th = base + Math.PI / F + (i / arr.length) * Math.PI * 2 + 0.4;
+  (p.exposes || []).filter((e) => !merged.has(e)).forEach((e, i, arr) => {
+    const th = Math.PI / 2 + (i - (arr.length - 1) / 2) * 0.5;   // fanned out in front of the part
     const pos = new V3(p.pos.x + Math.cos(th) * (p.r + 2.4), p.pos.y - 0.8, p.pos.z + Math.sin(th) * (p.r + 2.4));
-    const t = PORTS[e.type] || PORTS.function, key = `${p.id}@${i}`;
+    const t = PORTS[e.type] || PORTS.function, key = `${p.id}@${p.exposes.indexOf(e)}`;
     const node = addNode(key, 'port', 'port', pos, 0.2, t.color, { owner: p, ref: e.ref, expose: e });
     node.icons.push({ cell: LUCIDE[e.type] ? e.type : 'ƒ', scale: 1.15, off: 0, color: t.color });
     node.label = new Label(`<span class="pt" style="--c:${t.color}">${t.label}</span>${esc(e.what)}`, 'lb-port', new V3(pos.x, pos.y - 0.6, pos.z), 36, { mode: 'below', dy: 4, ent: { type: 'port', key } });
     if (e.ref) node.code = new Label(codeHtml(e.ref, 4), 'lb-code', pos, 22, { mode: 'right', dy: 18, ent: { type: 'code', ref: e.ref } });
     p.detailNodes.push(node); p.detailLabels.push(node.label);
   });
+}
+
+// A ring label points away from its part on screen, so the ring reads like a clock face; on the left it is mirrored
+// (class l) so the step number sits by its bead.
+function faceOut(L, p, cam) {
+  const dx = L.pos.x - p.pos.x, dz = L.pos.z - p.pos.z, sx = (dx * cam[0] + dz * cam[2]) / p.ring;
+  const m = sx > 0.2 ? 'right' : sx < -0.2 ? 'left' : dx * cam[4] + dz * cam[6] > 0 ? 'above' : 'below';
+  if (m !== L.mode) { L.mode = m; L.el.classList.toggle('l', m === 'left'); }
 }
 
 // Active (flow step) and selected nodes are lit. Solid materials read a colour above 1 as "glow" (the only thing that blooms).
@@ -576,24 +590,37 @@ export function updateLOD(dt) {
     p.sumLabel.boost = p.label.boost;
     const tracksPulse = player.part === p || p === selPart || (state.codeLink?.hot && state.codeLink.part === p) ? 1 : 0;
     const u = p.unfold * vis * (1 - 0.97 * (p.struct?.depth || 0));
+    // Text only for the part in focus: a neighbour's details fade out as 3D shapes, never as ghost labels.
+    const lu = p === fp ? u : 0, cam = camera.matrixWorld.elements;
     for (const n of p.detailNodes) {
-      n.alpha = u * dimOf(p.id) * (state.activeKeys.size && !state.activeKeys.has(n.key) && player.part === p ? 0.55 : 1);
-      if (u > 0.01) {
+      const on = state.activeKeys.has(n.key);
+      n.alpha = u * dimOf(p.id) * (state.activeKeys.size && !on && player.part === p ? 0.55 : 1);
+      if (lu > 0.01) {
         const dn = camPos.distanceTo(n.pos);
-        n.label.want = u * (1 - smooth(Math.max(40, p.focusDist * 1.8), Math.max(64, p.focusDist * 2.6), dn));
-        n.label.boost = state.activeKeys.has(n.key) ? 60 : 0;
-        if (n.tether) trackSet.setAlpha(n.tether, u * 0.22);
-        if (n.code) {
-          // Fully visible when you point at the step (or select it); otherwise it fades in as you get close.
-          const pointed = state.hoverEnt?.node === n || state.selected?.node === n;
-          n.code.want = pointed ? u : u * (1 - smooth(10, 14, dn));
-          n.code.boost = (pointed ? 80 : Math.max(0, 14 - dn) * 9) + (state.activeKeys.has(n.key) ? 40 : 0);
+        n.label.want = lu * (1 - smooth(Math.max(40, p.focusDist * 1.8), Math.max(64, p.focusDist * 2.6), dn));
+        const pointed = state.hoverEnt?.node === n || state.selected?.node === n;
+        n.label.boost = pointed ? 90 : on ? 60 : 0;
+        if (on !== !!n.on) { n.on = on; n.label.el.classList.toggle('on', on); }
+        // the step's words show once you come closer (or it plays, or you point at it); re-measure for the label layout
+        const full = on || pointed || dn < p.focusDist * (n.full ? 0.85 : 0.75);
+        if (full !== !!n.full) {
+          const L = n.label; n.full = full; L.el.classList.toggle('full', full);
+          if (L.shown) { L.w = L.el.offsetWidth; L.h = L.el.offsetHeight; } else if (L.attached) { L.el.remove(); L.attached = false; }   // hidden: measured when it next attaches
         }
-      } else { n.label.want = 0; if (n.tether) trackSet.setAlpha(n.tether, 0); if (n.code) n.code.want = 0; }
+        if (n.step != null) faceOut(n.label, p, cam);
+        if (n.code) {
+          // Code shows when you point at the step (or select it), or once you are right next to it.
+          n.code.want = pointed ? lu : lu * (1 - smooth(8, 11, dn));
+          n.code.boost = (pointed ? 80 : Math.max(0, 11 - dn) * 9) + (on ? 40 : 0);
+        }
+      } else { n.label.want = 0; if (n.code) n.code.want = 0; }
     }
-    for (const fi of p.flowInfo) {
-      fi.title.want = u * (1 - smooth(Math.max(40, p.focusDist * 1.2), Math.max(60, p.focusDist * 1.7), camPos.distanceTo(fi.title.pos)));
-      for (const s of fi.segs) trackSet.setAlpha(s, u * 0.7, tracksPulse);
+    for (let k = 0; k < p.flowInfo.length; k++) {
+      const fi = p.flowInfo[k], cur = player.part === p && player.k === k ? player.i : -1;   // the step playing, if any
+      if (lu > 0.01) faceOut(fi.title, p, cam);
+      fi.title.want = lu * (1 - smooth(Math.max(40, p.focusDist * 1.8), Math.max(64, p.focusDist * 2.6), camPos.distanceTo(fi.title.pos)));
+      for (const s of fi.spine) trackSet.setAlpha(s, u * 0.5, tracksPulse);
+      for (let i = 0; i < fi.steps.length; i++) if (fi.steps[i].seg) trackSet.setAlpha(fi.steps[i].seg, u * (i === cur ? 0.9 : 0.2), i === cur ? 1 : 0);
     }
   }
   for (const d of docks.values()) {
@@ -803,13 +830,14 @@ export function flowById(id) {
   return f && { f, part: p, k };
 }
 
+// Inside a part, the current step's ends are fixed by its layout (buildDetail): the callee end, or else the caller end.
 export function actorPos(name, prev) {
-  if (player.part) return player.part.flowInfo[player.k].map.get(name) || player.part.pos;
+  if (player.part) { const st = player.part.flowInfo[player.k].steps[player.i]; return name === player.steps[player.i].to ? st.b : st.a; }
   return parts.get(name)?.pos || exts.get(name)?.pos || prev || new V3();
 }
 
 export function actorKey(name) {
-  if (player.part) return name === player.part.id ? player.part.id : `${player.part.id}#${player.k}:${name}`;
+  if (player.part) { const st = player.part.flowInfo[player.k].steps[player.i]; return name === player.steps[player.i].to ? st.kb : st.ka; }
   return name;
 }
 

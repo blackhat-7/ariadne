@@ -84,6 +84,7 @@ export function updateLabels(dt) {
     const x = (tmpV.x * 0.5 + 0.5) * W, y = (-tmpV.y * 0.5 + 0.5) * H;
     if (L.mode === 'above') { L.x0 = x - L.w / 2; L.y0 = y - L.dy - L.h; }
     else if (L.mode === 'right') { L.x0 = x + L.dy; L.y0 = y - 2; }
+    else if (L.mode === 'left') { L.x0 = x - L.dy - L.w; L.y0 = y - 2; }
     else if (L.mode === 'below') { L.x0 = x - L.w / 2; L.y0 = y + L.dy; }
     else { L.x0 = x - L.w / 2; L.y0 = y - L.h / 2; }
     if (L.x0 > W || L.y0 > H || L.x0 + L.w < 0 || L.y0 + L.h < 0) continue;
@@ -258,9 +259,9 @@ export function hoverHtml(ent) {
   if (!ent.node || ent.type === 'flow' || ent.type === 'code') return '';
   const n = ent.node, p = n.owner;
   if (n.type === 'port') { const t = PORTS[n.expose.type] || PORTS.function; return readout({ code: true, kind: t.label, color: t.color, name: n.expose.what, sub: p.name, subColor: p.clusterObj.color, file: n.ref, summary: `How work enters ${p.name}` }); }
-  const f = p.flows[n.flow], steps = f.steps.filter((s) => s.from === n.name || s.to === n.name);
+  const f = p.flows[n.flow];
   return readout({ code: true, kind: n.type === 'proxy' ? 'calls out' : 'step', color: n.type === 'proxy' ? 'var(--blue)' : 'var(--cyan)', name: n.name, sub: p.name, subColor: p.clusterObj.color, file: n.ref,
-    summary: steps[0]?.text, stats: [stat(I.flow, steps.length, `step${steps.length === 1 ? '' : 's'} in “${f.title}”`)] });
+    summary: f.steps[n.step].text, stats: [stat(I.flow, n.step + 1, `of ${f.steps.length} steps in “${f.title}”`)] });
 }
 
 export function openPanel() { detail.classList.add('open'); document.body.classList.add('detail-open'); }
