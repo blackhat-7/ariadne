@@ -1,6 +1,6 @@
 // voxel.js
 // The "Voxel" look: models from voxels.js drawn as instanced unit cubes, floating islands, the flow cart, and the
-// render setup (sun with soft shadows, GTAO, ACES, dusk sky). scene.js swaps these in when VOXEL is on; layout,
+// render setup (sun with soft shadows, GTAO, ACES, night sky). scene.js swaps these in when VOXEL is on; layout,
 // picking, LOD, flows and labels are shared with the Glass look.
 // Exports: BOX, uWorld, CUBE, RING, voxMat, voxEntries, voxIsland, setIslandAlpha, voxMesh, voxCart, voxPreview, setupVoxel, followSun
 // Imports: theme: THEME | util: clamp | voxels: island
@@ -53,7 +53,7 @@ export function voxMat(mode) {
         float mx = max(vC.r, max(vC.g, vC.b)), glow = max(mx - 1.0, 0.0), fade = 1.0 - smoothstep(0.1, 0.4, vA);
         vec3 base = vC / max(mx, 1.0);
         diffuseColor.rgb = mix(base, mix(vec3(dot(base, vec3(0.2126, 0.7152, 0.0722))), uFade, 0.6), fade * 0.8);`)
-      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += base * glow * 0.9 * (1.0 - fade);');
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += base * glow * ' + V.glow.toFixed(2) + ' * (1.0 - fade);');
   };
   m.customProgramCacheKey = () => 'vox' + mode;
   const d = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });

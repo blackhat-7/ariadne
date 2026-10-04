@@ -39,11 +39,12 @@ export const THEME = {
   link: '#c9ced8', track: tint(200, 0.08), fnNode: '#5ac8fa', pulse: 0xffffff, trail: 0x5ac8fa, beacon: tint(75, 0.12),
   shadow: 0.6,
   board: { edge: '#8b93a3', bundle: '#5b6272', dead: '#5b6272', text: '#c9ced8', textSelf: '#f5f7fa', textStub: '#8b93a3' },
-  // Voxel look (voxel.js): cool-to-warm sky, warm sun, soft sky fill, ACES; bloom only reaches emissive voxels and the cart.
+  // Voxel look (voxel.js): night. Deep navy sky, a cool moon with soft shadows, dark blue fill, ACES; lit windows,
+  // crystals and the cart glow (glow scales emissive voxels) and are the only things bright enough to bloom.
   voxel: {
-    skyTop: '#9fc3e6', skyMid: '#f6dcc0', skyLow: '#f2b98f', fog: '#e9d3bd',
-    sun: '#ffe2bd', sunI: 2.3, sky: '#fff1dc', ground: '#7a6a85', hemiI: 0.75, exposure: 0.95,
-    bloom: { strength: 0.3, radius: 0.35, threshold: 0.9 },
+    skyTop: '#03050b', skyMid: '#0a1022', skyLow: '#1a1d3a', fog: '#0a0f20',
+    sun: '#b4c8ff', sunI: 1.25, sky: '#4a5d92', ground: '#120f1a', hemiI: 0.6, exposure: 1.1,
+    bloom: { strength: 0.6, radius: 0.5, threshold: 0.82 }, glow: 1.6,
     dock: '#a3b08f',   // neutral meadow for dock islands, so the externals' own colours stand out
   },
 };
