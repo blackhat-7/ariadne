@@ -109,7 +109,7 @@ export function initChat() {
     const text = $('#chatin').value.trim(); if (!text) return;
     // Never spend someone's plan on a model they didn't choose.
     if (!state.chatCfg.picked) {
-      addMsg('bot', 'Pick an agent and model first: every answer uses your plan. On a $20 plan, <b>claude · haiku</b> is quick and light; <b>sonnet</b> for harder questions.');
+      addMsg('bot', 'Pick an agent and model first: every answer uses your own model usage.');
       $('#settings').hidden = false; $('#model').focus();
       return;
     }

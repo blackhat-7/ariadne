@@ -248,8 +248,7 @@ def choose_model(args, summary):
         sys.exit(f"agent {args.agent!r} is not installed")
     while not args.model:
         if agent["id"] == "claude":
-            options = ["sonnet  (recommended: near-Opus quality, far less usage)",
-                       "haiku   (fastest, cheapest)", "opus    (best, uses the most)"]
+            options = ["sonnet", "haiku", "opus"]
         else:
             query = input(f"Search {agent['id']} models (e.g. deepseek, qwen): ").strip().lower()
             options = [m for m in agent["models"] if all(w in m.lower() for w in query.split())][:15]
@@ -532,8 +531,9 @@ CHAT_PROTOCOL = """You are the guide inside "ariadne", a 3D map of this codebase
 markdown (a few sentences or bullets). Use Read/Grep/Glob on the repo when the map is not enough;
 cite code as path:line.
 
-You can drive the view. End EVERY answer with a fenced block named actions holding a JSON array
-(use [] when nothing fits). Allowed actions:
+You can drive the view, and the user sees it move. Whenever they ask to see/show something, or a
+place in the map would help, include actions. End EVERY answer with a fenced block named actions
+holding a JSON array (use [] when nothing fits); never write the JSON anywhere else. Allowed actions:
 - {"type":"focus","id":"<part, cluster or external id>"}   fly the camera there
 - {"type":"play","flow":"<partId>#<index>"} or {"type":"play","flow":"system#<index>"}   play a flow
 - {"type":"highlight","ids":["<id>", ...]}   glow these, dim the rest ([] clears)
@@ -551,7 +551,8 @@ Another:
 [{"type":"highlight","ids":["tracker","Postgres"]}]
 ```
 """
-ACTIONS_RE = re.compile(r"```actions\s*\n(.*?)```\s*$", re.S)
+# Models don't always fence the block as asked: accept ```actions / ```json / bare JSON arrays of actions.
+ACTIONS_RE = re.compile(r'```(?:actions|json)?\s*(\[\s*\{.*?\}\s*\])\s*```|(\[\s*\{\s*"type"\s*:.*?\}\s*\])', re.S)
 
 
 def chat_digest(m):
@@ -619,13 +620,12 @@ def chat(body, map_path, repo):
     except RuntimeError as e:
         return {"reply": f"Chat failed: {e}", "actions": []}
     actions = []
-    match = ACTIONS_RE.search(text.rstrip() + "\n")
-    if match:
-        text = text[:match.start()].rstrip()
+    for match in ACTIONS_RE.finditer(text):
         try:
-            actions = valid_actions(json.loads(match[1]), m)
+            actions += valid_actions(json.loads(match[1] or match[2]), m)
         except json.JSONDecodeError:
             pass
+    text = re.sub(r"\n{3,}", "\n\n", ACTIONS_RE.sub("", text)).strip()
     return {"reply": text, "actions": actions}
 
 

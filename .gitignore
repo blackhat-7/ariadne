@@ -5,3 +5,4 @@ map.json
 maps/
 __pycache__/
 tmp/
+.claude/

@@ -4,7 +4,11 @@
 
 AI writes code faster than anyone can read it. Ariadne turns any repository into a calm, explorable 3D map that explains itself in plain English: what the system does, how its parts talk, and how a request actually flows through the code, down to the exact line.
 
-![Ariadne overview](docs/overview.png)
+![Ariadne demo](docs/demo.webp)
+
+[Watch in HD (MP4)](docs/demo.mp4)
+
+Demo: the [OpenTelemetry Demo](https://github.com/open-telemetry/opentelemetry-demo) (Apache-2.0), mapped with `--model sonnet` in about a minute.
 
 ## What you get
 
@@ -37,15 +41,7 @@ Non-interactive: `--agent claude --model sonnet --yes`. Add `--base main` to lig
 
 ## Choosing a model
 
-Mapping reads a lot of code, so **Ariadne never picks a model for you**. Rough guide:
-
-| Plan / budget | Mapping (`build`) | Chat |
-|---|---|---|
-| Claude Pro ($20) | `claude` · **sonnet** | `claude` · **haiku** |
-| Claude Max | `claude` · opus or sonnet | sonnet |
-| Minimal cost | `pi` or `opencode` with a cheap model (e.g. DeepSeek Flash) | same |
-
-A mid-sized monorepo (~50 services) takes about 7 minutes to map with parallel agents. Cheaper models may give shallower flows, but they cannot quietly invent code locations: every reference is verified.
+Mapping reads a lot of code, so **Ariadne never picks a model for you**: `build` shows a usage estimate and asks for the agent and model, and the chat asks before its first answer. Any model your agent CLI supports works. Larger models trace flows more thoroughly; smaller ones are faster and use less. Either way, every `file:line` reference is checked, so a weaker model can't quietly invent code locations.
 
 ## What uses a model, and what doesn't
 
