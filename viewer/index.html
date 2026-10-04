@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b0d12">
+<link rel="icon" href="data:,">
+<title>Ariadne</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="base.css">
+<link rel="stylesheet" href="hud.css">
+<link rel="stylesheet" href="board.css">
+<link rel="stylesheet" href="drawer.css">
+<link rel="stylesheet" href="chat.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script type="importmap">
+{"imports":{
+  "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+}}
+</script>
+</head>
+<body>
+<div id="stage"><div id="labels"></div></div>
+<div id="vignette"></div>
+
+<div id="top" class="hud glass corner">
+  <div id="title"><span class="dot"></span><span id="tname">Ariadne</span></div>
+  <div id="summary"></div>
+  <div id="rev" class="tag"></div>
+  <button id="flowsbtn" class="tag"></button>
+  <div id="sysflows" hidden></div>
+  <div id="crumbs"></div>
+</div>
+
+<button id="searchbtn" class="hud glass">Search parts, flows, functions <kbd>/</kbd></button>
+<div id="search" class="hud glass corner"><input id="q" placeholder="Search parts, externals, flows, functions…" autocomplete="off" spellcheck="false"><div id="results"></div></div>
+
+<div id="left" class="hud">
+  <div id="legend" class="glass min">
+    <h4><button id="legmin" class="tag">? Legend</button></h4>
+    <div class="body">
+      <div class="note">shape = kind · colour = group</div>
+      <div id="legkinds"></div>
+      <div class="grp tag">External systems</div>
+      <div id="legext"></div>
+      <div class="grp tag">Links</div>
+      <div class="row"><span class="line"></span>calls / uses</div>
+      <div class="note">moving light = direction</div>
+      <div class="row"><span class="beam"></span>traffic between groups</div>
+      <div class="note">thicker = more connections</div>
+      <div class="row"><span class="unv">⚠</span>code ref not verified</div>
+      <div class="row"><span style="width:12px;height:12px;border:2px solid var(--rel-caller);border-radius:50%;flex:none"></span>changed (with Δ overlay)</div>
+      <button id="chgbtn">Δ SHOW RECENT CHANGES</button>
+    </div>
+  </div>
+  <div id="mini" class="glass corner"><span class="tag">Top view</span><canvas id="minicv" width="400" height="400"></canvas></div>
+</div>
+
+<div id="detail" class="hud glass"><button id="dclose" title="Close (Esc)">×</button><div id="dscroll"><div id="codeslot"></div><div id="dbody"></div></div></div>
+
+<div id="hover" class="hud glass"></div>
+
+<div id="flowbar" class="hud glass corner">
+  <div id="fbtop">
+    <div id="fbtitle"></div>
+    <button class="fbb" id="fbprev" title="Previous step (←)">⏮</button>
+    <button class="fbb" id="fbplay" title="Play / pause (Space)">⏸</button>
+    <button class="fbb" id="fbnext" title="Next step (→)">⏭</button>
+    <button class="fbb" id="fbvoice" hidden></button>
+    <div id="fbspeed"><button data-s="0.5">.5×</button><button data-s="1" class="on">1×</button><button data-s="2">2×</button></div>
+    <button class="fbb" id="fbclose" title="Stop (Esc)">✕</button>
+  </div>
+  <div id="fbcap"></div>
+  <div id="fbprog"></div>
+</div>
+<div id="hint" class="hud"></div>
+
+<div id="chat" class="hud">
+  <button id="chatpill" class="glass"><span class="sym i-spark"></span>Ask about this code</button>
+  <div id="chatbox" class="glass">
+    <div id="chathead"><span id="chattitle">Ask Ariadne</span><button id="chatmeta" class="pill" title="Change agent / model"></button><button id="chatmin" class="icon-btn" title="Close"><span class="sym i-x"></span></button></div>
+    <div id="chatlog"></div>
+    <form id="chatform"><textarea id="chatin" rows="1" placeholder="How does a training get a GPU?"></textarea><button id="chatsend" title="Send (Enter)"><span class="sym i-up"></span></button></form>
+  </div>
+</div>
+
+<div id="drawer" class="hud glass">
+  <div id="dhead">
+    <button class="icon-btn" id="dtreebtn" title="Toggle file tree"><span class="sym i-sidebar"></span></button>
+    <button class="icon-btn" id="dback" title="Back (Alt+←)"><span class="sym i-left"></span></button>
+    <button class="icon-btn" id="dfwd" title="Forward (Alt+→)"><span class="sym i-right"></span></button>
+    <div id="dpath"></div>
+    <button id="dpart" class="pill" hidden></button>
+    <button class="icon-btn" id="dfind" title="Go to file (Ctrl+P)"><span class="sym i-search"></span></button>
+    <button class="icon-btn" id="dx" title="Close (Esc)"><span class="sym i-x"></span></button>
+  </div>
+  <div id="dctx"></div>
+  <div id="dmain"><div id="dtree"></div><div id="dsplit" title="Drag to resize · double-click to reset"></div><div id="dcode"></div></div>
+</div>
+<div id="gpop" class="glass"></div>
+<div id="finder" class="hud glass"><div id="fbar"><span class="sym i-search"></span><input id="fq" placeholder="Go to file" autocomplete="off" spellcheck="false"><kbd>esc</kbd></div><div id="fres"></div></div>
+<button id="gear" class="hud glass" title="Settings" hidden><span class="sym i-gear"></span></button>
+<div id="settings" class="hud glass" hidden>
+  <div id="sethead"><h3>Settings</h3><button id="setdone" class="btn primary">Done</button></div>
+  <section id="chatset" hidden>
+    <div class="tag sethd">Chat agent</div>
+    <div id="agents" class="seg"></div>
+    <div class="tag" id="modlbl">Model</div>
+    <div id="combo"><span class="sym i-search"></span><input id="model" class="field" placeholder="Search, or type any model id" autocomplete="off" spellcheck="false"></div>
+    <div id="models"></div>
+    <div class="note">Enter picks the highlighted model, or uses what you typed.</div>
+  </section>
+  <section id="voiceset" hidden>
+    <div class="tag sethd">Voice</div>
+    <div class="setrows">
+      <label class="setrow">Narration on by default<span class="tog"><input type="checkbox" id="vdefault"><i></i></span></label>
+      <label class="setrow">Voice<select id="vpick" class="field"></select></label>
+      <label class="setrow">Rate<input type="range" id="vrate" min="0.6" max="1.6" step="0.05"><span id="vrateval"></span></label>
+      <label class="setrow">Read function and file too<span class="tog"><input type="checkbox" id="vdetail"><i></i></span></label>
+    </div>
+    <button id="vpreview" class="btn tinted"><span class="sym i-play"></span>Preview</button>
+  </section>
+</div>
+<div id="boardLegend" class="hud glass" hidden></div>
+<div id="boot">Initialising map…</div>
+
+<script type="module" src="main.js"></script>
+</body>
+</html>

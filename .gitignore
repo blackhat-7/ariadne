@@ -1,0 +1,6 @@
+# Generated maps contain excerpts of the mapped code: never commit them.
+map.json
+*.map.json
+*.parts/
+maps/
+__pycache__/
