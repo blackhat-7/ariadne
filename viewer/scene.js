@@ -513,12 +513,26 @@ export function updateLOD(dt) {
         const d = p.struct && boardNear(p.struct, tgt) ? Math.min(p.pos.distanceTo(tgt), 6) : p.pos.distanceTo(tgt);
         if (d < best) { best = d; fp = p; }
       }
+      // Nothing under the pivot (zooming toward the pointer moves it): take the part nearest the middle
+      // of the view, if we're close enough to it, so detail doesn't depend on an exact zoom spot.
+      if (!fp) {
+        camera.getWorldDirection(navN);
+        for (const p of parts.values()) {
+          if (!kindOn[kindOf(p)]) continue;
+          const along = navR.subVectors(p.pos, camPos).dot(navN), d = camPos.distanceTo(p.pos);
+          const off = Math.sqrt(Math.max(0, d * d - along * along));
+          if (along > 0 && d < p.focusDist * 2.6 && off < p.r * 2 + 10 && off < best) { best = off; fp = p; }
+        }
+      }
     }
   }
   state.focusPart = fp;
   for (const p of parts.values()) {
     const d = camPos.distanceTo(p.pos);
-    const want = p === fp ? 1 - smooth(p.focusDist * 1.15, p.focusDist * 1.9, d) : 0;
+    // Unfolded detail stays until well past the part's viewing distance, and folds a bit later than it
+    // unfolds (hysteresis), so it doesn't pop in and out with small zoom changes.
+    const far = p.unfold > 0.5 ? 3.2 : 2.6;
+    const want = p === fp ? 1 - smooth(p.focusDist * 1.8, p.focusDist * far, d) : 0;
     p.unfold = (p.unfold || 0) + (want - (p.unfold || 0)) * Math.min(1, dt * 5);
     if (Math.abs(want - p.unfold) < 0.002) p.unfold = want;   // settle, so an idle view stops changing
     p.dist = d;
@@ -542,7 +556,7 @@ export function updateLOD(dt) {
       n.alpha = u * dimOf(p.id) * (state.activeKeys.size && !state.activeKeys.has(n.key) && player.part === p ? 0.55 : 1);
       if (u > 0.01) {
         const dn = camPos.distanceTo(n.pos);
-        n.label.want = u * (1 - smooth(Math.max(32, p.focusDist * 1.1), Math.max(50, p.focusDist * 1.6), dn));
+        n.label.want = u * (1 - smooth(Math.max(40, p.focusDist * 1.8), Math.max(64, p.focusDist * 2.6), dn));
         n.label.boost = state.activeKeys.has(n.key) ? 60 : 0;
         if (n.tether) trackSet.setAlpha(n.tether, u * 0.22);
         if (n.code) {
