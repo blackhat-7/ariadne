@@ -7,6 +7,7 @@
 """
 import argparse
 import hashlib
+import importlib
 import json
 import os
 import re
@@ -637,7 +638,7 @@ holding a JSON array (use [] when nothing fits); never write the JSON anywhere e
 - {"type":"highlight","ids":["<id>", ...]}   glow these, dim the rest ([] clears)
 - {"type":"filter","kinds":["service","job","library","tool"]}   show only these kinds
 - {"type":"overview"}   fly back out to the whole system
-- {"type":"code","ref":"<path:line from the map>"}   open that code panel
+- {"type":"code","ref":"<repo path:line>"}   open the code panel at any file and line in the repo
 Only use ids, flows and refs that appear in the map below.
 
 Example ending:
@@ -670,7 +671,13 @@ def chat_digest(m):
     return "\n".join(lines)
 
 
-def valid_actions(raw, m):
+def is_repo_ref(repo, ref):
+    """ref is "path:line" naming a real file inside the repo (any file the chat found, not only map refs)."""
+    path, _, line = str(ref or "").rpartition(":")
+    return bool(path) and line.isdigit() and read_file(repo, path) is not None
+
+
+def valid_actions(raw, m, repo):
     ids = ({p["id"] for p in m.get("parts", [])} | {c["id"] for c in m.get("clusters", [])}
            | {e["id"] for e in m.get("externals", [])})
     flows = {f"{p['id']}#{i}" for p in m.get("parts", []) for i in range(len(p.get("flows", [])))}
@@ -692,7 +699,7 @@ def valid_actions(raw, m):
                 out.append({"type": t, "kinds": keep})
         elif t == "overview":
             out.append({"type": t})
-        elif t == "code" and a.get("ref") in m.get("code", {}):
+        elif t == "code" and is_repo_ref(repo, a.get("ref")):
             out.append({"type": t, "ref": a["ref"]})
     return out
 
@@ -720,11 +727,21 @@ def chat(body, map_path, repo):
     actions = []
     for match in ACTIONS_RE.finditer(text):
         try:
-            actions += valid_actions(json.loads(match[1] or match[2]), m)
+            actions += valid_actions(json.loads(match[1] or match[2]), m, repo)
         except json.JSONDecodeError:
             pass
     text = re.sub(r"\n{3,}", "\n\n", ACTIONS_RE.sub("", text)).strip()
+    if not text:   # the model only acted (or did nothing): say so instead of an empty bubble
+        text = "; ".join(describe(a) for a in actions) or "I couldn't find that in the map or the code."
     return {"reply": text, "actions": actions}
+
+
+def describe(action):
+    t = action["type"]
+    return {"focus": f"Showing {action.get('id')}", "play": f"Playing flow {action.get('flow')}",
+            "code": f"Opening `{action.get('ref')}`", "overview": "Back to the overview",
+            "highlight": "Highlighting " + ", ".join(action.get("ids", [])),
+            "filter": "Showing only " + ", ".join(action.get("kinds", []))}.get(t, t)
 
 
 DEFINITION = r"(func|def|class|type|interface|struct|enum|trait|fn|function|const|let|var)\s+(\([^)]*\)\s*)?"
@@ -798,6 +815,9 @@ def name_match(rows, funcs, i, qualifier, name, words):
     return same_dir or (cands if len(cands) == 1 else [])
 
 
+GENERATED = re.compile(r"(\.pb\.(go|cc|h)|_pb2(_grpc)?\.py|_grpc\.pb|_gen\.|\.generated\.|/genproto/|/protos?/|/mocks?/|_mock\.)")
+
+
 class Structure:
     """Functions, types and calls for the whole repo, from code-review-graph (tree-sitter, many
     languages). Built once in a background thread; the repo must be a git checkout."""
@@ -843,6 +863,24 @@ class Structure:
             new.replace(compact)
             stamp.write_text(key)
         self.db = compact
+
+    def names(self, folders):
+        """Names of functions defined under the given repo folders (x-ray: which calls are ours).
+        Generated code is left out, or every protobuf getter would show up as a call."""
+        if self.db is None:
+            return set()
+        rows = sqlite3.connect(self.db).execute("SELECT DISTINCT name, file_path FROM nodes WHERE kind != 'Class'")
+        root = str(self.repo) + "/"
+        return {n for n, f in rows if not GENERATED.search(f) and any(in_dir(f.replace(root, ""), d) for d in folders)}
+
+    def fn_at(self, rel, line):
+        """Name of the innermost function containing rel:line, or None."""
+        if self.db is None:
+            return None
+        row = sqlite3.connect(self.db).execute(
+            "SELECT name FROM nodes WHERE kind != 'Class' AND file_path = ? AND line_start <= ? AND line_end >= ? "
+            "ORDER BY line_end - line_start LIMIT 1", (str(self.repo / rel), line, line)).fetchone()
+        return row[0] if row else None
 
     def part(self, part, kinds):
         """Code structure of one map part, plus its metro lines and effects (see METRO.md)."""
@@ -996,6 +1034,88 @@ def effects(nodes, part, kinds):
     return {i: list(t.values()) for i, t in found.items()}
 
 
+class Below:
+    """Below function level (XRAY.md): x-ray, gates and states, extracted with tree-sitter by
+    ariadne_xray / ariadne_gates. Those need tree-sitter-language-pack (installed with Ariadne by uv)."""
+
+    def __init__(self, repo, files, parts, kinds, structure):
+        self.repo, self.parts, self.kinds, self.structure = repo, parts, kinds, structure
+        self.files = [f for f in files if SOURCE.search(f)]
+        self.lock, self.all_gates, self.metro = threading.Lock(), None, {}
+
+    def module(self, name):
+        try:
+            return importlib.import_module(name)
+        except ImportError as e:
+            raise RuntimeError(f"{e.name} is not installed; install Ariadne with uv (see README)")
+
+    def part_of(self, rel):
+        owners = [p for p in self.parts.values() if p.get("path") and in_dir(rel, p["path"])]
+        return max(owners, key=lambda p: len(p["path"]))["id"] if owners else None
+
+    def source(self, rel):
+        path = (self.repo / rel).resolve()
+        if not path.is_relative_to(self.repo) or not path.is_file():
+            raise RuntimeError(f"not a file in the repo: {rel}")
+        return path
+
+    def xray(self, rel, line):
+        targets = {int(u["ref"].rsplit(":", 1)[1]): u["target"] for p in self.parts.values()
+                   for u in p.get("uses", []) if u.get("ref", "").startswith(rel + ":") and u.get("target")}
+        # Our own calls are into the same part or a shared library; other parts are reached over the network.
+        own = self.part_of(rel)
+        folders = [p["path"] for p in self.parts.values() if p.get("path") and (p["id"] == own or p.get("kind") == "library")]
+        return self.module("ariadne_xray").xray(self.source(rel), line, rel, self.structure.names(folders or [""]), targets)
+
+    def explain(self, rel, line, agent, model):
+        mod, result = self.module("ariadne_xray"), self.xray(rel, line)
+        if result.get("status") != "ready":
+            return {"labels": {}, "error": result.get("error", "nothing to explain")}
+        fn = result["fn"]
+        text = "\n".join(self.source(rel).read_text(errors="replace").splitlines()[fn["start"] - 1:fn["end"]])
+        cache = Path.home() / ".cache" / "ariadne" / "labels" / (
+            hashlib.sha1(f"{rel}\0{text}\0{agent}\0{model}".encode()).hexdigest() + ".json")
+        if cache.exists():
+            return {"labels": json.loads(cache.read_text())}
+        if model and not MODEL_RE.fullmatch(model):
+            raise RuntimeError(f"invalid model name: {model}")
+        labels = mod.parse_labels(ask_agent(agent, model, "", mod.explain_prompt(result, text), self.repo, 300), result)
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(labels))
+        return {"labels": labels}
+
+    def lines_of(self, part_id, fn):
+        """Metro lines (part:lineId) with a station named fn."""
+        if part_id not in self.metro:
+            self.metro[part_id] = self.structure.part(self.parts[part_id], self.kinds)
+        s = self.metro[part_id]
+        if s.get("status") != "ready":
+            return []
+        return [f"{part_id}:{L['id']}" for L in s["lines"]
+                if any(s["nodes"][i]["name"] == fn for i in L["trunk"] + [i for b in L["branches"] for i in b["nodes"]])]
+
+    def gates(self, part=None):
+        if self.structure.db is None:
+            return {"status": "building", "gates": []}
+        with self.lock:
+            if self.all_gates is None:
+                found = self.module("ariadne_gates").gates(self.repo, self.files, self.part_of, self.structure.fn_at)
+                for g in found:
+                    g["lines"] = sorted({ln for c in g.get("checks", []) if c.get("part") and c.get("fn")
+                                         for ln in self.lines_of(c["part"], c["fn"])})
+                self.all_gates = found
+        gates = [g for g in self.all_gates if part is None or any(
+            u.get("part") == part for u in g.get("reads", []) + g.get("checks", []))]
+        return {"status": "ready", "gates": gates}
+
+    def states(self, part):
+        if self.structure.db is None:
+            return {"status": "building", "machines": []}
+        path = self.parts[part].get("path", "")
+        files = [f for f in self.files if in_dir(f, path)]
+        return {"status": "ready", "machines": self.module("ariadne_gates").states(self.repo, files, self.structure.fn_at)}
+
+
 def serve(args):
     if args.target.endswith(".json"):   # older form: serve map.json --repo DIR
         map_path, repo = Path(args.target).expanduser().resolve(), repo_dir(args.repo or ".")
@@ -1013,6 +1133,7 @@ def serve(args):
     data = json.loads(map_path.read_text())
     parts = {p["id"]: p for p in data.get("parts", [])}
     kinds = {e["id"]: e.get("kind", "other") for e in data.get("externals", [])}
+    below = Below(repo, files, parts, kinds, structure)
 
     class Handler(BaseHTTPRequestHandler):
         def send(self, code, data, ctype):
@@ -1034,6 +1155,19 @@ def serve(args):
                 if arg("part") not in parts:
                     return self.send(404, b'{"error": "unknown part"}', "application/json")
                 return self.send(200, json.dumps(structure.part(parts[arg("part")], kinds)).encode(), "application/json")
+            if path in ("/api/xray", "/api/gates", "/api/states"):
+                try:
+                    if path == "/api/xray":
+                        result = below.xray(arg("file"), int(arg("line") or 0))
+                    elif path == "/api/gates":
+                        result = below.gates(arg("part") or None)
+                    elif arg("part") in parts:
+                        result = below.states(arg("part"))
+                    else:
+                        result = {"status": "error", "error": "unknown part"}
+                except (RuntimeError, ValueError) as e:
+                    result = {"status": "error", "error": str(e)}
+                return self.send(200, json.dumps(result).encode(), "application/json")
             if path == "/api/tree":
                 found = [f for f in files if in_dir(f, arg("dir"))][:5000]
                 return self.send(200, json.dumps({"files": found}).encode(), "application/json")
@@ -1055,6 +1189,16 @@ def serve(args):
                 self.send(404, b"not found", "text/plain")
 
         def do_POST(self):
+            if self.path == "/api/xray/explain":
+                try:
+                    body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
+                    agents_ready.wait(30)
+                    if body.get("agent") not in {a["id"] for a in AGENTS if a["installed"]}:
+                        raise RuntimeError(f"{body.get('agent')} is not installed on the server")
+                    result = below.explain(body["file"], int(body["line"]), body["agent"], body.get("model") or "")
+                except (RuntimeError, ValueError, KeyError) as e:
+                    result = {"labels": {}, "error": str(e)}
+                return self.send(200, json.dumps(result).encode(), "application/json")
             if self.path != "/api/chat":
                 return self.send(404, b"not found", "text/plain")
             try:
