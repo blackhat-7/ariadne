@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import webbrowser
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -200,6 +201,31 @@ def run_cli(cmd, cwd, timeout):
     return r.stdout
 
 
+def run_claude_stream(prompt, cwd, tools, allowed, model, on_tool):
+    """`claude -p` with streamed events, calling on_tool(name) for each tool call (for progress)."""
+    cmd = ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose", "--tools", ",".join(tools),
+           "--allowedTools", ",".join(allowed), "--strict-mcp-config", "--no-session-persistence"]
+    cmd += ["--model", model] if model else []
+    proc = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            stdin=subprocess.DEVNULL)
+    result = None
+    for line in proc.stdout:
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("type") == "assistant":
+            for block in event.get("message", {}).get("content", []):
+                if block.get("type") == "tool_use":
+                    on_tool(block.get("name", ""))
+        elif event.get("type") == "result":
+            result = event
+    proc.wait()
+    if not result or result.get("is_error"):
+        raise RuntimeError(f"claude failed: {(result or {}).get('result') or proc.stderr.read()[-500:]}")
+    return result.get("result", "")
+
+
 def extract_json(text):
     """Parse the first JSON object in text (tolerates prose or ``` fences around it)."""
     start = text.find("{")
@@ -284,6 +310,50 @@ def choose_model(args, summary):
         sys.exit("cancelled")
 
 
+class Progress:
+    """One live status line on stderr: elapsed time, batches done, tool calls (files read, searches)."""
+
+    def __init__(self, total):
+        self.total, self.finished, self.reads, self.calls = total, 0, 0, 0
+        self.start, self.lock, self.live = time.time(), threading.Lock(), sys.stderr.isatty()
+        self.stopped = threading.Event()
+        threading.Thread(target=self.loop, daemon=True).start()
+
+    def line(self):
+        m, sec = divmod(int(time.time() - self.start), 60)
+        return (f"  {m:02d}:{sec:02d}  batches {self.finished}/{self.total} done"
+                f"  ·  {self.reads} files read, {self.calls} tool calls")
+
+    def show(self, note=None):
+        with self.lock:
+            if note:
+                print(("\r\033[K" if self.live else "") + f"  {note}", file=sys.stderr)
+            if self.live:
+                print("\r\033[K" + self.line(), end="", file=sys.stderr, flush=True)
+
+    def tick(self, tool):
+        with self.lock:
+            self.calls += 1
+            self.reads += tool == "Read"
+
+    def done(self, names, error=None):
+        with self.lock:
+            self.finished += 1
+        self.show(error or f"✓ {names}")
+
+    def loop(self):
+        while not self.stopped.wait(1 if self.live else 30):
+            if self.live:
+                self.show()
+            else:
+                print(self.line(), file=sys.stderr, flush=True)
+
+    def stop(self):
+        self.stopped.set()
+        if self.live:
+            print("\r\033[K" + self.line(), file=sys.stderr)
+
+
 def build(args):
     repo = repo_dir(args.repo)
     args.output = args.output or str(default_map(repo))
@@ -300,6 +370,9 @@ def build(args):
             owner.setdefault(max(match, key=len), []).append(f)
     sizes = {s: sum(count_lines(repo / f) for f in owner.get(s, [])) for s in slices}
     ids = slice_ids(slices)
+    # Big repos get more, smaller batches: wall time is set by the slowest batch.
+    args.batches = args.batches or min(16, max(4, -(-len(slices) // 5)))
+    args.jobs = args.jobs or args.batches
     batches = batch(slices, sizes, args.batches)
     source = sum((repo / f).stat().st_size for fs in owner.values() for f in fs
                  if (repo / f).is_file() and (repo / f).stat().st_size < 1_000_000) // 4
@@ -319,25 +392,33 @@ def build(args):
             lines.append(f"- id \"{ids[s]}\", path \"{s}\", ~{sizes[s]} lines{skip}")
         prompt = (f"{schema}\n\nYou are mapping this repository (cwd = repo root). "
                   f"Your assigned folders, one part each:\n" + "\n".join(lines) +
-                  "\n\nRead the code, then reply with ONLY the JSON object {\"parts\": [...]}, "
+                  "\n\nWork fast and stay focused: start from each part's entry points (main, routes, handlers, "
+                  "consumers, cron), read only the files its main flows pass through, and skip tests, generated "
+                  "code (*.pb.go, *_gen.*, mocks), vendored code and lock files. 2-4 flows per part is enough."
+                  "\n\nThen reply with ONLY the JSON object {\"parts\": [...]}, "
                   "no prose, no fences. Other parts in the repo you may reference by id: "
                   + ", ".join(ids[s] for s in slices if s not in group))
         out = work / f"parts-{i}.json"
         try:
             if args.agent == "claude":
-                text = run_claude(prompt, repo, ["Read", "Grep", "Glob", "Bash"],
-                                  ["Read", "Grep", "Glob", "Bash(git ls-files:*)"], model=args.model)
+                text = run_claude_stream(prompt, repo, ["Read", "Grep", "Glob", "Bash"],
+                                         ["Read", "Grep", "Glob", "Bash(git ls-files:*)"], args.model,
+                                         lambda name: progress.tick(name))
             else:
                 text = ask_agent(args.agent, args.model, "", prompt, repo, timeout=3600)
             out.write_text(json.dumps(extract_json(text), indent=1))
-            print(f"batch {i}: {len(group)} slices -> {out}", file=sys.stderr)
+            progress.done(", ".join(ids[s] for s in group))
             return out
         except (RuntimeError, ValueError) as e:
-            print(f"batch {i} failed: {e}", file=sys.stderr)
+            progress.done(None, f"batch {i + 1} failed: {e}")
             return None
 
+    print(f"Mapping {len(slices)} parts in {len(batches)} parallel batches with {args.agent} · {args.model}.",
+          file=sys.stderr)
+    progress = Progress(len(batches))
     with ThreadPoolExecutor(args.jobs) as pool:
         outs = [p for p in pool.map(map_batch, range(len(batches)), batches) if p]
+    progress.stop()
     if not outs:
         sys.exit("all batches failed")
     args.parts, args.repo = [str(p) for p in outs], str(repo)
@@ -967,8 +1048,8 @@ def main():
     s = sub.add_parser("serve", help="serve the viewer for a mapped repo")
     for p in (o, b):
         p.add_argument("repo", nargs="?", default=".", help="repo folder (default: current folder)")
-        p.add_argument("--jobs", type=int, default=6, help="parallel agent runs")
-        p.add_argument("--batches", type=int, default=7, help="number of slice batches")
+        p.add_argument("--jobs", type=int, help="parallel agent runs (default: one per batch)")
+        p.add_argument("--batches", type=int, help="number of batches (default: by repo size, up to 16)")
     a.add_argument("parts", nargs="+")
     a.add_argument("--repo", required=True)
     for p in (o, b, a):
