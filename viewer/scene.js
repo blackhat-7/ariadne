@@ -243,7 +243,7 @@ export function build() {
       if (VOXEL) { e.r *= 1.7; e.pos.y = -1 + e.r; }   // bigger beside terrain voxels; standing on the dock island, whose top is y = -1
     });
   }
-  state.overviewDist = state.Rext * 1.75;
+  state.overviewDist = state.Rext * 2.05;   // the whole system ring fits a 16:9 screen (50° fov, looking down ~50°)
 
   // ---- scene: environment; clusters: glass plates (Voxel: floating islands) ----
   const floorY = Math.min(...[...clusters.values()].map((c) => c.pos.y)) - 22;
@@ -696,6 +696,7 @@ export function updateLOD(dt) {
     let al = L.toExt ? 0.06 * oa : 0.28 * Math.max(oa, ob);
     const touchFp = fp && (a === fp || b === fp);
     const hot = (hp && (a === hp || b === hp)) || (state.emphLinks && state.emphLinks.has(L));
+    if (state.routeLit && !touchFp) al *= 0.15;
     if (touchFp) al = Math.max(al, 0.2 + 0.45 * fpU); else if (fp) al *= 1 - 0.7 * fpU;
     if (hot) al = Math.max(0.7, al);
     al *= vis * (1 - (hot ? 0.8 : 0.9) * fpD);
@@ -729,6 +730,7 @@ export function updateLOD(dt) {
     const hot = mine || (state.emphLinks ? s.hows.some((L) => state.emphLinks.has(L)) : false);
     if (state.emph && !mine) al *= hot ? 1.6 : 0.12;
     else if (fc) al *= mine ? 1.5 : 0.3;
+    if (state.routeLit) al *= 0.15;
     const u = s.mesh.material.uniforms;
     set(u.uAlpha, 'value', al * (1 - fpD)); set(u.uPulse, 'value', hot ? 1 : 0); s.alpha = u.uAlpha.value;
     if (hot && u.uAlpha.value > 0.004) state.redraw = true;   // the pulse runs

@@ -101,6 +101,7 @@ export function updateRoutes() {
     if (hov >= 0) showCard(hov);   // its footer says whether it is playing
   }
   if (hov !== shown) showCard(hov);
+  state.routeLit = hov >= 0 || sys;   // updateLOD quiets the other links while a whole route is shown
   const cur = playR?.steps[player.i]?.stop || null;
   if (cur !== curStop) { curStop?.el.classList.remove('cur'); cur?.el.classList.add('cur'); curStop = cur; }
   const fp = state.focusPart, fpU = fp?.unfold || 0, fpD = fp?.struct?.depth || 0;

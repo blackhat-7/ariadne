@@ -97,8 +97,8 @@ export function updateLabels(dt) {
   const hit = (L, y) => { for (let i = 0; i < n; i++) { const A = acc[i]; if (L.x0 < A.x0 + A.w + 14 && L.x0 + L.w + 14 > A.x0 && y < A.y0 + A.h + 8 && y + L.h + 8 > A.y0) return A; } return null; };
   for (const L of cand) {
     const A = hit(L, L.y0);
-    // In the way of a placed label: slide just clear of it (at most its own height, 48px) rather than vanish.
-    const y = !A ? L.y0 : [A.y0 + A.h + 8, A.y0 - 8 - L.h].find((y) => Math.abs(y - L.y0) <= Math.min(L.h, 48) && !hit(L, y));
+    // In the way of a placed label: slide just clear of it (at most its own height plus the gap) rather than vanish.
+    const y = !A ? L.y0 : [A.y0 + A.h + 8, A.y0 - 8 - L.h].find((y) => Math.abs(y - L.y0) <= L.h + 8 && !hit(L, y));
     if (y !== undefined) { L.y0 = y; acc[n++] = L; L.ok = true; }
   }
   const k = Math.min(1, dt * 10);
