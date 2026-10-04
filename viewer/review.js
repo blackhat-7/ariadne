@@ -20,7 +20,7 @@ const CAM_KEY = 'ariadne.reviewCam', FILTER_KEY = 'ariadne.reviewFilters';
 
 // data: the review JSON. head: the selected head as the API names it ("<branch>" | "pr:<N>"), '' = the server's own review.
 // rows: the visible functions in list order; cur: the highlighted one (its id). done: reviewed function ids.
-const R = { data: null, head: '', base: '', rows: [], cur: null, opened: null, done: new Set(), f: { high: false, hideLow: false, hideTests: true },
+const R = { data: null, head: '', base: '', rows: [], cur: null, opened: null, on: false, done: new Set(), f: { high: false, hideLow: false, hideTests: true },
   diffs: new Map(), diffOn: true, narr: null, narrBusy: false, narrNote: '', map: null, tour: null, busy: null, error: '', blastSaved: null };
 let panel, tourBar, pick = null;
 
@@ -32,14 +32,14 @@ const short = (path) => path.split('/').slice(-2).join('/');
 /* ---------------- used by the x-ray and the code drawer ---------------- */
 // The reviewed function at a head location (the innermost one), or null outside review mode.
 export function reviewFn(file, line) {
-  if (!R.data || !panel || panel.hidden) return null;
+  if (!R.data || !R.on) return null;
   return R.data.functions.filter((f) => f.file === file && f.head && line >= f.head.start && line <= f.head.end)
     .sort((a, b) => (a.head.end - a.head.start) - (b.head.end - b.head.start))[0] || null;
 }
 
 // Query suffix for /api/xray in review mode: the base's version, or the selected head's while the map shows another
 // version (otherwise the shown tree already is the head). The server knows the selection.
-export const xrayRev = (side) => (!R.data || panel.hidden ? '' : side === 'base' ? '&rev=base' : R.map?.shown === false ? '&rev=head' : '');
+export const xrayRev = (side) => (!R.data || !R.on ? '' : side === 'base' ? '&rev=base' : R.map?.shown === false ? '&rev=head' : '');
 
 function loadDiff(file) {
   const k = file;
@@ -203,7 +203,7 @@ function inline(a, b) {
 /* ---------------- code drawer: Diff view ---------------- */
 // drawer.js asks this for a file it opens: the diff's HTML for a changed file with Diff on, else null (plain code).
 async function diffHtml(path) {
-  const file = R.data && !panel.hidden ? R.data.files.find((f) => f.path === path) : null;
+  const file = R.data && R.on ? R.data.files.find((f) => f.path === path) : null;
   const sw = $('#dview');
   sw.hidden = !file;
   if (!file) return null;
@@ -283,11 +283,22 @@ function setReview(j, head, base = '') {
   if (state.curFile && drawer.classList.contains('open')) { const f = state.curFile; state.curFile = null; openFile(f, 0); }
 }
 
+// Review mode on or off. While on, the panel can be hidden: the diff view, map rings and x-ray marks stay.
 function showPanel(on) {
-  panel.hidden = !on;
-  document.body.classList.toggle('review-on', on);
-  $('#rvbtn').hidden = on || !R.canPick;
+  R.on = on;
   if (!on) { markReview(null); stopTour(); blast(null); $('#dview').hidden = true; }
+  hidePanel(false);
+}
+
+function hidePanel(hide) {
+  panel.hidden = !R.on || hide;
+  document.body.classList.toggle('review-on', !panel.hidden);   // the panel takes the top-left panel's place
+  const b = $('#rvbtn');
+  b.hidden = !panel.hidden || !(R.on || R.canPick);
+  b.innerHTML = R.on ? `${I.branch}Review · ${esc(R.head ? headLabel(R.head) : 'working copy')}` : 'Review a branch…';
+  b.title = R.on ? 'Show the review panel' : 'Review a branch or pull request';
+  $('#rvexit').hidden = !(R.on && hide);
+  if (!panel.hidden && R.data) render();
 }
 
 function exitReview() {
@@ -330,7 +341,7 @@ function rowHtml(f) {
 function render() {
   if (!panel || panel.hidden) return;
   const d = R.data;
-  const head = `<div class="rv-hd"><span class="tag">Review</span><button class="btn rv-pickbtn" data-rv="pick" title="Review another branch or pull request">${I.branch}${d ? 'Switch' : 'Pick branch'}</button><button class="icon-btn rv-x" data-rv="exit" title="Leave review mode">${I.x}</button></div>`;
+  const head = `<div class="rv-hd"><span class="tag">Review</span><button class="btn rv-pickbtn" data-rv="pick" title="Review another branch or pull request">${I.branch}${d ? 'Switch' : 'Pick branch'}</button><button class="icon-btn rv-x" data-rv="hide" title="Hide the panel (the review stays on)">${I.x}</button></div>`;
   if (R.busy) {
     const sel = R.busy !== 'load', what = !sel ? (R.building ? 'Building the review…' : 'Loading the review…') : `Loading ${esc(headLabel(R.busy.h))}…`;
     panel.innerHTML = `${head}<div class="rv-busy"><div class="rv-prog"><i></i></div><b>${what}</b><span>${R.building || sel ? 'Reading the diff and x-raying changed functions. Usually instant when cached.' : ''}</span>${sel ? '<button class="btn" data-rv="cancel">Cancel</button>' : ''}<div class="skel"><i></i><i></i><i></i></div></div>`;
@@ -630,12 +641,14 @@ export function initReview() {
     const f = state.curFile, line = +dcode.querySelector('.cl.on')?.dataset.n || 0;
     state.curFile = null; openFile(f, line);
   };
-  $('#rvbtn').onclick = () => openPicker();
+  $('#rvbtn').onclick = () => R.on ? hidePanel(false) : openPicker();
+  $('#rvbtn').insertAdjacentHTML('afterend', `<button id="rvexit" class="icon-btn" title="Leave review mode" hidden>${I.x}</button>`);
+  $('#rvexit').onclick = () => exitReview();
 
   panel.addEventListener('click', (e) => {
     const t = e.target, a = t.closest('[data-rv]')?.dataset.rv;
     if (a === 'pick') return openPicker();   // (no event argument: a click is not a refresh)
-    if (a === 'exit') return exitReview();
+    if (a === 'hide') return hidePanel(true);
     if (a === 'cancel') { R.ctl?.abort(); R.ctl = null; R.busy = null; return render(); }
     if (a === 'retry') return R.head ? selectHead(R.head, R.base) : loadReview();
     if (a === 'dismiss') { R.error = ''; return render(); }
@@ -722,7 +735,7 @@ export function initReview() {
 
   // #review loads the server's review, #review=pr:123 / #review=branch:name a chosen one; a review already loaded opens too.
   const m = /(?:^#|&)review(?:=([^&]*))?(?:&base=([^&]*))?/.exec(location.hash);
-  getJSON('/api/branches').then(() => { R.canPick = true; if (panel.hidden) $('#rvbtn').hidden = false; }, () => {});
+  getJSON('/api/branches').then(() => { R.canPick = true; hidePanel(panel.hidden && R.on); }, () => {});
   if (m?.[1]) { showPanel(true); const h = decodeURIComponent(m[1]); selectHead(h.startsWith('branch:') ? h.slice(7) : h, m[2] ? decodeURIComponent(m[2]) : ''); }
   else if (m) { showPanel(true); loadReview(); }
   else getJSON('/api/review').then((j) => { if (j.status === 'ready' || j.status === 'building') { showPanel(true); loadReview(); } }, () => {});

@@ -9,7 +9,11 @@ body.review-on #boardLegend{left:calc(var(--rv-w) + 32px)}
 body.rv-touring #lens{bottom:168px}
 body.review-on #drawer{width:var(--w,min(44vw,940px))}
 #rvbtn{margin:10px 0 0 6px;height:24px;padding:0 10px;border-radius:999px;background:var(--accent-soft);font:600 11px var(--sans);letter-spacing:.02em;text-transform:none;color:var(--accent)}
-#rvbtn[hidden]{display:none}
+#rvbtn[hidden],#rvexit[hidden]{display:none}
+#rvbtn:not([hidden]){display:inline-flex;align-items:center;gap:5px;white-space:nowrap;max-width:240px}
+#rvbtn .ic{width:12px;height:12px;flex:none}
+#rvexit{width:24px;height:24px;margin:10px 0 0 2px;vertical-align:bottom}
+#rvexit .ic{width:12px;height:12px}
 #rvbtn:hover{background:color-mix(in srgb,var(--accent) 24%,transparent)}
 
 #review{left:16px;top:16px;bottom:16px;width:var(--rv-w);display:flex;flex-direction:column;border-radius:var(--r-panel);z-index:9;animation:rvIn var(--dur) var(--ease)}
