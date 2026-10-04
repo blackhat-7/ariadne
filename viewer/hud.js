@@ -1,14 +1,16 @@
 // hud.js
 // Exports: labelLayer, labels, Label, cand, acc, tmpV, updateLabels, hoverEl, updateHover, hoverHtml, detail, dbody, codeslot, openPanel, closeDetail, rf, goLink, flowHtml, showDetail, openCode, openExcerpt, level, updateCrumbs, stepOut, mini, mg, drawMini, buildSearch, fuzzy, runSearch, renderResults, openSearch, closeSearch, shapeIcons, buildLegend, setKinds, resizable, addHandle, panelMax, panelMin, initLabels, initHoverCard, initDetailPanel, initBreadcrumb, initMinimap, initSearch, initLegend, initResizablePanels
-// Imports: state: state | board: buildStruct, disposeStruct, flyToBoard, setFacing, structs | drawer: codeHtml, drawer, dtree, openFile | main: act | scene: G, SHAPES, camPos, camera, clusters, controls, dive, docks, entFromEvent, entFromNode, exts, flyOverview, flyToEnt, gotoStep, kindOn, nodes, parts, playFlow, player, recolor, select, stage | theme: EXT, KINDS, PORTS, extOf, kindOf | util: $, V3, clamp, esc
+// Imports: state: state | board: buildStruct, disposeStruct, flyToBoard, setFacing, structs | drawer: codeHtml, drawer, dtree, openFile | main: act | scene: G, SHAPES, camPos, camera, clusters, controls, dive, docks, entFromEvent, entFromNode, exts, flyOverview, flyToEnt, gotoStep, kindOn, nodes, parts, playFlow, player, recolor, select, stage | theme: EXT, KINDS, PORTS, VOXEL, extOf, kindOf | util: $, V3, clamp, esc | voxel: voxPreview | voxels: externalModel, partModel
 import * as THREE from 'three';
 import { state } from './state.js';
 import { buildStruct, disposeStruct, flyToBoard, setFacing, structs } from './board.js';
 import { codeHtml, drawer, dtree, openFile } from './drawer.js';
 import { act } from './main.js';
 import { G, SHAPES, camPos, camera, clusters, controls, dive, docks, entFromEvent, entFromNode, exts, flyOverview, flyToEnt, gotoStep, kindOn, nodes, parts, playFlow, player, recolor, select, stage } from './scene.js';
-import { EXT, KINDS, PORTS, extOf, kindOf } from './theme.js';
+import { EXT, KINDS, PORTS, VOXEL, extOf, kindOf } from './theme.js';
 import { $, V3, clamp, esc } from './util.js';
+import { voxPreview } from './voxel.js';
+import { externalModel, partModel } from './voxels.js';
 
 /* SF-Symbols-style line icons (Lucide geometry, 24px grid). */
 // Size, fill and stroke are set on the element too, so an icon stays small and outlined even before hud.css applies.
@@ -452,8 +454,10 @@ export function shapeIcons() {
   const tint = (k) => new THREE.MeshStandardMaterial({ color: k, roughness: 0.55, emissive: k, emissiveIntensity: 0.15 });
   const shots = { service: 'service', job: 'jobCron', library: 'library', tool: 'tool', ...Object.fromEntries(Object.keys(EXT).map((k) => ['ext_' + k, 'ext_' + k])) };
   for (const [name, shape] of Object.entries(shots)) {
-    const mat = tint(name.startsWith('ext_') ? EXT[name.slice(4)].color : '#9be7f5'), g = new THREE.Group();
-    for (const [geo] of SHAPES[shape]) g.add(new THREE.Mesh(G[geo], mat));
+    const color = name.startsWith('ext_') ? EXT[name.slice(4)].color : '#9be7f5';
+    let g, mat;
+    if (VOXEL) { g = voxPreview(name.startsWith('ext_') ? externalModel(name.slice(4), 1, color) : partModel(name, 1, color)); mat = g.material; }
+    else { mat = tint(color); g = new THREE.Group(); for (const [geo] of SHAPES[shape]) g.add(new THREE.Mesh(G[geo], mat)); }
     sc.add(g); r2.render(sc, cam); out[name] = r2.domElement.toDataURL(); sc.remove(g); mat.dispose();
   }
   r2.dispose(); r2.forceContextLoss();

@@ -45,6 +45,13 @@ Direction: visionOS meets a pro Apple app. Calm, precise, crisp. Futuristic thro
 - Keep instancing; shared geometries/materials; no per-frame allocations.
 - Target 60fps on a laptop GPU with a large real-world map (50+ parts); measure frame time before/after.
 
+## Second look: Voxel
+- Settings → Appearance: Glass (default) | Voxel, saved in localStorage `ariadne.theme`; `?theme=voxel` forces it. Switching reloads.
+- Only the world changes (voxel.js + models in voxels.js); layout, picking, LOD, flows, labels, HUD, metro board, Lens and drawer are shared.
+- Style: MagicaVoxel-like renders, not Minecraft. Floating islands per domain and dock, small procedural models per kind, a voxel cart for flows.
+- Rendering: instanced unit cubes, sun with PCF soft shadows following the focus, GTAO, ACES, cool-to-warm sky, gentle fog, bloom on emissive voxels only.
+- Faded things bleach toward the fog instead of turning see-through; the world dissolves (ordered dither) and the sky dims when a call board opens.
+
 ## Every UI surface (apply the above consistently)
 - Top bar: title + summary panel, search field (Spotlight-like: centered, large, frosted, live results with icons and kind labels), controls hint, settings gear.
 - Detail panel: header with kind/domain pills, title, path; sections with small caps headers; lists with icons, hover rows, disclosure chevrons.

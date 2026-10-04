@@ -1,6 +1,14 @@
 // theme.js
-// Exports: THEME, oklch, mute, SVG, KINDS, EXT, PORTS, kindOf, extOf, initVocabulary
+// Exports: LOOK, VOXEL, THEME, oklch, mute, SVG, KINDS, EXT, PORTS, kindOf, extOf, initVocabulary
 // Imports: (nothing)
+
+// The world's look: 'glass' (default) or 'voxel'. Chosen in Settings (saved), or forced with ?theme=voxel for screenshots.
+export const LOOK = (() => {
+  let t = new URLSearchParams(location.search).get('theme');
+  try { t ||= localStorage.getItem('ariadne.theme'); } catch { /* storage blocked */ }
+  return t === 'voxel' ? 'voxel' : 'glass';
+})();
+export const VOXEL = LOOK === 'voxel';
 
 
 // Colour: oklch (L 0..1, C, hue°) -> '#rrggbb' (sRGB, gamut-clipped). Domain tints share one lightness so no group shouts.
@@ -31,6 +39,13 @@ export const THEME = {
   link: '#c9ced8', track: tint(200, 0.08), fnNode: '#5ac8fa', pulse: 0xffffff, trail: 0x5ac8fa, beacon: tint(75, 0.12),
   shadow: 0.6,
   board: { edge: '#8b93a3', bundle: '#5b6272', dead: '#5b6272', text: '#c9ced8', textSelf: '#f5f7fa', textStub: '#8b93a3' },
+  // Voxel look (voxel.js): cool-to-warm sky, warm sun, soft sky fill, ACES; bloom only reaches emissive voxels and the cart.
+  voxel: {
+    skyTop: '#9fc3e6', skyMid: '#f6dcc0', skyLow: '#f2b98f', fog: '#e9d3bd',
+    sun: '#ffe2bd', sunI: 2.3, sky: '#fff1dc', ground: '#7a6a85', hemiI: 0.75, exposure: 0.95,
+    bloom: { strength: 0.3, radius: 0.35, threshold: 0.9 },
+    dock: '#a3b08f',   // neutral meadow for dock islands, so the externals' own colours stand out
+  },
 };
 
 export let SVG, KINDS, EXT, PORTS, kindOf, extOf;
