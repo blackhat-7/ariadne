@@ -30,6 +30,7 @@ The first run maps the repo: it shows a usage estimate and asks which agent and 
 | `ariadne [folder]` | Map if needed, then open |
 | `ariadne build [folder]` | Map again (after big changes) |
 | `ariadne serve [folder]` | Open without mapping |
+| `ariadne pr [--base REV] [--pr N]` | Review your changes against the default branch |
 
 Skip the questions with `--agent claude --model sonnet --yes`.
 
@@ -39,6 +40,8 @@ Skip the questions with `--agent claude --model sonnet --yes`.
 - Press ▶ on a flow to play a request step by step.
 - Click a function to see its callers and callees.
 - Ask the chat a question; it answers from the code and moves the view.
+- Review a branch or pull request: every changed function with what changed in its logic (removed error checks, inverted conditions, new network calls, changed limits), its diff, and the flows it touches. No model needed; a summary is optional.
+- Switch branches in the review picker. Only the parts whose files changed are mapped again, and Ariadne asks before it uses your model.
 - ⚙ Settings: chat model, voice narration, and the Glass or Voxel look.
 
 Pinch or scroll to zoom, drag to rotate, `/` to search, `Esc` to go back.
@@ -47,6 +50,7 @@ Pinch or scroll to zoom, drag to rotate, `/` to search, `Esc` to go back.
 
 - Everything runs locally. Your agent CLI sends the code it reads to its provider.
 - Maps are saved in `~/.local/share/ariadne/maps/`, not in your repo. They contain snippets of your code.
+- To map another branch, Ariadne checks it out in a git worktree next to its maps; your checkout is not touched.
 - `serve --host 0.0.0.0` makes the map and your code reachable from your network.
 - Every `file:line` in a map is checked; anything that doesn't match is marked ⚠.
 

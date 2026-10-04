@@ -25,3 +25,4 @@ bypass-selection = true
 "viewer" = "ariadne/viewer"
 "ariadne_xray.py" = "ariadne_xray.py"
 "ariadne_gates.py" = "ariadne_gates.py"
+"ariadne_review.py" = "ariadne_review.py"

@@ -311,6 +311,87 @@ def choose_model(args, summary):
         sys.exit("cancelled")
 
 
+def file_hashes(repo):
+    """path -> content hash for every tracked or untracked file: git's index hashes, recomputed for files
+    changed in the working tree. Cheap enough to run on every build or branch switch."""
+    out = git(repo, "ls-files", "-s", "-z")
+    hashes = {}
+    for entry in (out or "").split("\0"):
+        if "\t" in entry:
+            meta, path = entry.split("\t", 1)
+            hashes[path] = meta.split()[1]
+    changed = git(repo, "ls-files", "-m", "-o", "--exclude-standard", "-z") if out is not None else None
+    for path in (changed.split("\0") if changed is not None else repo_files(repo)):
+        f = repo / path
+        if path and f.is_file():
+            data = f.read_bytes()   # git's blob hash, so an edit matches the same content once committed
+            hashes[path] = hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+    return hashes
+
+
+def snapshot(repo, rev=None):
+    """(files, hashes, sizes) of the working tree, or of a git revision without checking it out."""
+    if rev is None:
+        files = repo_files(repo)
+        hashes = file_hashes(repo)
+        return files, hashes, {f: (repo / f).stat().st_size for f in files if (repo / f).is_file()}
+    hashes, sizes = {}, {}
+    for entry in (git(repo, "ls-tree", "-r", "-l", "-z", rev) or "").split("\0"):
+        if "\t" in entry:
+            meta, path = entry.split("\t", 1)
+            _, kind, sha, size = meta.split()
+            if kind == "blob" and not IGNORED & set(Path(path).parts[:-1]):
+                hashes[path], sizes[path] = sha, int(size) if size.isdigit() else 0
+    return sorted(hashes), hashes, sizes
+
+
+def plan(repo, rev=None, fresh=False):
+    """What mapping `rev` (default: the working tree) needs: its slices, which are already in the part
+    cache, and a size estimate for the rest. Cheap: no files are read for a revision."""
+    files, hashes, sizes = snapshot(repo, rev)
+    slices = find_slices(repo, files)
+    owner = {}
+    for f in files:
+        match = [s for s in slices if in_dir(f, s)]
+        if match:
+            owner.setdefault(max(match, key=len), []).append(f)
+    cache = part_cache(repo) / "parts"
+    prints = slice_fingerprints(slices, owner, hashes)
+    cached = {s: json.loads((cache / f"{prints[s]}.json").read_text()) for s in slices
+              if not fresh and (cache / f"{prints[s]}.json").exists()}
+    todo = [s for s in slices if s not in cached]
+    tokens = sum(sizes.get(f, 0) for s in todo for f in owner.get(s, []) if sizes.get(f, 0) < 1_000_000) // 4
+    ids = slice_ids(slices)
+    # With every part cached, a model is still needed for the overview unless that is cached too.
+    overview = not todo and overview_path(repo, [dict(cached[s], id=cached[s].get("id") or ids[s])
+                                                 for s in slices]).exists()
+    return {"files": files, "slices": slices, "owner": owner, "ids": ids, "prints": prints,
+            "cached": cached, "todo": todo, "tokens": tokens, "needs_model": not overview}
+
+
+def overview_path(repo, parts):
+    """The overview (domains, system flows) is about how parts connect, so it is reused while the parts,
+    their kinds and what they use, publish and subscribe to stay the same: edits inside a part don't
+    need a new one. Its refs are verified again on every assemble."""
+    key = json.dumps(sorted([p["id"], p.get("kind"), sorted({str(u.get("target")) for u in p.get("uses", [])}),
+                             sorted(map(str, p.get("publishes", []))), sorted(map(str, p.get("subscribes", [])))]
+                            for p in parts))
+    return part_cache(repo) / "overview" / (hashlib.sha1(key.encode()).hexdigest()[:20] + ".json")
+
+
+def slice_fingerprints(slices, owner, hashes):
+    """slice -> hash of its files' contents: unchanged slices keep their mapped part across branches."""
+    return {s: hashlib.sha1((s + "".join(f"\0{f}={hashes.get(f, '')}" for f in sorted(owner.get(s, []))))
+                            .encode()).hexdigest()[:20] for s in slices}
+
+
+def part_cache(repo):
+    """Per-repository cache, shared by the checkout and any git worktrees of it (same git dir)."""
+    common = git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    key = Path(common.strip()).parent if common else repo
+    return MAPS / default_map(key).name.replace(".map.json", ".cache")
+
+
 class Progress:
     """One live status line on stderr: elapsed time, batches done, tool calls (files read, searches)."""
 
@@ -359,24 +440,23 @@ def build(args):
     repo = repo_dir(args.repo)
     args.output = args.output or str(default_map(repo))
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-    files = repo_files(repo)
-    slices = find_slices(repo, files)
+    # Parts whose files are unchanged since they were last mapped (on any branch) are reused as they are.
+    pl = plan(repo, fresh=getattr(args, "fresh", False))
+    slices, owner, ids, prints, cached, todo = (pl[k] for k in ("slices", "owner", "ids", "prints", "cached", "todo"))
     if not slices:
         sys.exit("no source folders found")
-    # nested projects: each file counts toward its nearest slice
-    owner = {}
-    for f in files:
-        match = [s for s in slices if in_dir(f, s)]
-        if match:
-            owner.setdefault(max(match, key=len), []).append(f)
-    sizes = {s: sum(count_lines(repo / f) for f in owner.get(s, [])) for s in slices}
-    ids = slice_ids(slices)
-    args.batches = args.batches or min(16, len(slices))   # wall time is set by the slowest batch
+    cache = part_cache(repo) / "parts"
+    sizes = {s: sum(count_lines(repo / f) for f in owner.get(s, [])) for s in todo}
+    if not todo:
+        print(f"All {len(slices)} parts are unchanged since they were last mapped: reusing them.", file=sys.stderr)
+        return finish_build(args, repo, slices, ids, cached, [])
+    args.batches = args.batches or min(16, len(todo))   # wall time is set by the slowest batch
     args.jobs = args.jobs or args.batches
-    batches = batch(slices, sizes, args.batches)
-    source = sum((repo / f).stat().st_size for fs in owner.values() for f in fs
-                 if (repo / f).is_file() and (repo / f).stat().st_size < 1_000_000) // 4
-    choose_model(args, f"Repo: {len(slices)} slices · {sum(sizes.values()):,} lines (≈ {source:,} tokens of source).\n"
+    batches = batch(todo, sizes, args.batches)
+    source = pl["tokens"]
+    reuse = f" ({len(cached)} unchanged parts reused)" if cached else ""
+    choose_model(args, f"Repo: {len(slices)} slices, {len(todo)} to map{reuse} · {sum(sizes.values()):,} lines "
+                       f"(≈ {source:,} tokens of source).\n"
                        f"Mapping reads much of it: expect very roughly {source * 3 // 10:,}–{source:,} tokens, "
                        f"in {len(batches)} parallel batches.")
     args.yes = True  # assemble below uses the same choice
@@ -413,15 +493,32 @@ def build(args):
             progress.done(None, f"batch {i + 1} failed: {e}")
             return None
 
-    print(f"Mapping {len(slices)} parts in {len(batches)} parallel batches with {args.agent} · {args.model}.",
+    print(f"Mapping {len(todo)} parts in {len(batches)} parallel batches with {args.agent} · {args.model}.",
           file=sys.stderr)
-    progress = Progress(len(batches))
+    progress = args.progress = Progress(len(batches))   # the server shows it while it refreshes a map
     with ThreadPoolExecutor(args.jobs) as pool:
         outs = [p for p in pool.map(map_batch, range(len(batches)), batches) if p]
     progress.stop()
-    if not outs:
+    if not outs and not cached:
         sys.exit("all batches failed")
-    args.parts, args.repo = [str(p) for p in outs], str(repo)
+    # Cache each freshly mapped part under its slice's fingerprint.
+    cache.mkdir(parents=True, exist_ok=True)
+    by_path = {s: s for s in todo} | {ids[s]: s for s in todo}
+    for out in outs:
+        for part in json.loads(Path(out).read_text()).get("parts", []):
+            s = by_path.get(part.get("path")) or by_path.get(part.get("id"))
+            if s:
+                (cache / f"{prints[s]}.json").write_text(json.dumps(part))
+    return finish_build(args, repo, slices, ids, cached, outs)
+
+
+def finish_build(args, repo, slices, ids, cached, outs):
+    """Assemble reused and freshly mapped parts into the map."""
+    work = Path(args.output).resolve().with_suffix(".parts")
+    work.mkdir(parents=True, exist_ok=True)
+    reused = work / "parts-cached.json"
+    reused.write_text(json.dumps({"parts": [cached[s] for s in slices if s in cached]}, indent=1))
+    args.parts, args.repo, args.yes = [str(reused)] + [str(p) for p in outs], str(repo), True
     assemble(args)
 
 
@@ -577,14 +674,18 @@ def assemble(args):
     externals = {u["target"] for p in parts for u in p.get("uses", []) if u.get("target")} - ids
     known_refs = {r for p in parts for r, _ in refs_of(p)}
 
-    if not args.no_llm:
-        choose_model(args, f"Assembling {len(parts)} parts: one call to name domains and find system flows.")
+    overview = overview_path(repo, parts)
     if args.no_llm:
         summary, clusters, flows, kinds = "", folder_clusters(parts), [], {}
+    elif overview.exists() and not getattr(args, "fresh", False):
+        summary, clusters, flows, kinds = json.loads(overview.read_text())
     else:
+        choose_model(args, f"Assembling {len(parts)} parts: one call to name domains and find system flows.")
         try:
             summary, clusters, flows, kinds = llm_overview(parts, part_ids, externals, known_refs, repo,
                                                            args.agent, args.model)
+            overview.parent.mkdir(parents=True, exist_ok=True)
+            overview.write_text(json.dumps([summary, clusters, flows, kinds]))
         except (RuntimeError, ValueError) as e:
             print(f"overview failed, clustering by folder: {e}", file=sys.stderr)
             summary, clusters, flows, kinds = "", folder_clusters(parts), [], {}
@@ -874,6 +975,20 @@ class Structure:
         root = str(self.repo) + "/"
         return {n for n, f in rows if not GENERATED.search(f) and any(in_dir(f.replace(root, ""), d) for d in folders)}
 
+    def callers(self, rel, name):
+        """Names of functions that call `name` defined in rel (from the call graph)."""
+        if self.db is None:
+            return []
+        db = sqlite3.connect(self.db)
+        targets = [q for (q,) in db.execute("SELECT qualified_name FROM nodes WHERE file_path = ? AND name = ?",
+                                            (str(self.repo / rel), name))]
+        if not targets:
+            return []
+        marks = ",".join("?" * len(targets))
+        return sorted({n for (n,) in db.execute(
+            f"SELECT DISTINCT n.name FROM edges e JOIN nodes n ON n.qualified_name = e.source_qualified "
+            f"WHERE e.target_qualified IN ({marks})", targets)})
+
     def fn_at(self, rel, line):
         """Name of the innermost function containing rel:line, or None."""
         if self.db is None:
@@ -1061,13 +1176,31 @@ class Below:
             raise RuntimeError(f"not a file in the repo: {rel}")
         return path
 
-    def xray(self, rel, line):
-        targets = {int(u["ref"].rsplit(":", 1)[1]): u["target"] for p in self.parts.values()
-                   for u in p.get("uses", []) if u.get("ref", "").startswith(rel + ":") and u.get("target")}
-        # Our own calls are into the same part or a shared library; other parts are reached over the network.
+    def targets(self, rel):
+        """Outside systems on rel's lines, from the map's verified uses refs."""
+        return {int(u["ref"].rsplit(":", 1)[1]): u["target"] for p in self.parts.values()
+                for u in p.get("uses", []) if u.get("ref", "").startswith(rel + ":") and u.get("target")}
+
+    def known(self, rel):
+        """Our own calls are into the same part or a shared library; other parts are reached over the network."""
         own = self.part_of(rel)
         folders = [p["path"] for p in self.parts.values() if p.get("path") and (p["id"] == own or p.get("kind") == "library")]
-        return self.module("ariadne_xray").xray(self.source(rel), line, rel, self.structure.names(folders or [""]), targets)
+        return self.structure.names(folders or [""])
+
+    def xray(self, rel, line, text=None):
+        """x-ray of the function at rel:line; text = another version of the file (a branch or the PR base)."""
+        mod = self.module("ariadne_xray")
+        if text is not None:
+            return mod.xray_text(text, line, rel, self.known(rel), {})
+        return mod.xray(self.source(rel), line, rel, self.known(rel), self.targets(rel))
+
+    def entries(self, part_id, fn):
+        """Metro lines of part_id that pass through fn, as {line, label}."""
+        if part_id not in self.parts:
+            return []
+        hits = set(self.lines_of(part_id, fn))
+        return [{"line": L["id"], "label": L["label"]} for L in self.metro[part_id].get("lines", [])
+                if f"{part_id}:{L['id']}" in hits]
 
     def explain(self, rel, line, agent, model):
         mod, result = self.module("ariadne_xray"), self.xray(rel, line)
@@ -1120,6 +1253,222 @@ class Below:
         return {"status": "ready", "machines": self.module("ariadne_gates").states(self.repo, files, self.structure.fn_at)}
 
 
+class View:
+    """One mapped tree the server shows: the checkout, or another revision checked out in the cache's worktree."""
+
+    def __init__(self, repo, map_path):
+        self.repo, self.map_path = repo, map_path
+        self.files = repo_files(repo)
+        self.structure = Structure(repo)
+        data = json.loads(map_path.read_text())
+        self.parts = {p["id"]: p for p in data.get("parts", [])}
+        self.kinds = {e["id"]: e.get("kind", "other") for e in data.get("externals", [])}
+        self.below = Below(repo, self.files, self.parts, self.kinds, self.structure)
+
+
+NARRATIVE_PROMPT = """You are reviewing a code change. Below are FACTS found deterministically from the syntax
+trees (trust them) and the changed hunks. Write a short review for a busy reviewer:
+- "summary": 2-3 plain sentences on what the change does and its main risk.
+- "items": the 3-8 things worth a reviewer's attention, most important first, each {"text", "refs"} where refs are
+  "path:line" in the NEW version taken from the facts or hunks.
+- "mismatches": things the PR description claims that the facts contradict or don't show, and important facts it
+  doesn't mention ([] when there is no description or nothing to say).
+Reply with ONLY the JSON object {"summary": "...", "items": [...], "mismatches": [...]}, no prose, no fences.
+"""
+
+
+class Reviews:
+    """PR review (REVIEW.md): the selected head and base, their review, and the map of that head.
+    A head other than the checkout is mapped in a git worktree in the cache; the part cache is shared,
+    so only parts whose files differ are mapped again."""
+
+    def __init__(self, root, view):
+        self.root, self.view, self.home, self.lock = root, view, view.map_path, threading.Lock()
+        self.head = self.base = self.rev = self.pr = self.result = self.job = None
+        self.branch_list = (0, None)
+
+    def engine(self):
+        return self.view.below.module("ariadne_review")
+
+    def compute(self):
+        b = self.view.below
+        r = self.engine().review(self.root, self.base, self.rev, part_of=b.part_of, known_functions=b.known,
+                                 effect_targets=b.targets, callers=b.structure.callers, metro_entries=b.entries)
+        return dict(r, pr=self.pr, head=dict(r["head"], ref=self.head))
+
+    def select(self, head=None, base=None, pr=None):
+        """head: None (the checkout with uncommitted changes), a branch or revision, or "pr:N"."""
+        engine = self.engine()
+        if head and head.startswith("pr:"):
+            pr = head[3:]
+            rev = engine.pr_head(self.root, pr)
+        else:
+            rev = engine.rev_parse(self.root, head) if head else None
+        with self.lock:
+            self.head, self.base, self.rev = head or None, base or None, rev
+            self.pr = pr_info(self.root, pr) if pr else None
+            self.result = self.compute()
+        tree, out, _ = self.target(rev)
+        if out.exists() and self.view.map_path != out and not self.running():
+            self.refresh(None, None, build_map=False)   # this head was mapped before: show that map
+        return self.result
+
+    def target(self, rev):
+        """(tree, map file, revision to check out) that maps rev."""
+        if rev is None or rev == (git(self.root, "rev-parse", "HEAD") or "").strip():
+            return self.root, self.home, None
+        cache = part_cache(self.root)
+        return cache / "worktree", cache / "maps" / f"{rev[:12]}.map.json", rev
+
+    def status(self):
+        """How far the shown map is from the selected head, and what refreshing it would cost."""
+        tree, out, rev = self.target(self.rev)
+        pl = plan(self.root, rev)
+        changed, tokens = len(pl["todo"]), pl["tokens"]
+        model = bool(changed) or pl["needs_model"]
+        return {"shown": self.view.map_path == out, "built": out.exists() and not changed,
+                "parts_total": len(pl["slices"]), "parts_changed": changed, "needs_model": model,
+                "est_tokens": [tokens * 3 // 10, tokens] if changed else [0, 0],
+                "est_seconds": [60, 240] if changed else [20, 90] if model else [2, 30],
+                "progress": self.progress()}
+
+    def running(self):
+        return self.job is not None and not self.job["done"]
+
+    def refresh(self, agent, model, build_map=True):
+        tree, out, rev = self.target(self.rev)
+        with self.lock:
+            if self.running():
+                raise RuntimeError("a map refresh is already running")
+            args = argparse.Namespace(repo=str(tree), output=str(out), agent=agent or None, model=model or None,
+                                      yes=True, fresh=False, batches=None, jobs=None, base=None, no_llm=False)
+            self.job = job = {"args": args, "start": time.time(), "phase": "preparing", "done": False, "error": None}
+        threading.Thread(target=self.run, args=(job, tree, out, rev, build_map), daemon=True).start()
+
+    def run(self, job, tree, out, rev, build_map):
+        try:
+            if rev:
+                job["phase"] = "checking out"
+                checkout(self.root, tree, rev)
+            if build_map or not out.exists():
+                job["phase"] = "mapping"
+                out.parent.mkdir(parents=True, exist_ok=True)
+                build(job["args"])
+            job["phase"] = "loading"
+            view = View(tree, out)
+            with self.lock:
+                self.view = view
+                if self.result:
+                    self.result = self.compute()
+            job["phase"] = "done"
+        except SystemExit as e:   # build stops with sys.exit on unrecoverable errors
+            job["error"] = str(e.code)
+        except (RuntimeError, ValueError, OSError) as e:
+            job["error"] = str(e)
+        finally:
+            job["done"] = True
+
+    def progress(self):
+        job = self.job
+        if job is None:
+            return None
+        p = getattr(job["args"], "progress", None)
+        assembling = job["phase"] == "mapping" and p is not None and p.stopped.is_set()
+        return {"phase": "assembling" if assembling else job["phase"], "elapsed": int(time.time() - job["start"]), "done": job["done"],
+                "error": job["error"], "batches": [p.finished, p.total] if p else None,
+                "reads": p.reads if p else 0}
+
+    def branches(self, fresh=False):
+        """Branches and pull requests; cached briefly because listing PRs with gh takes seconds."""
+        at, found = self.branch_list
+        if fresh or found is None or time.time() - at > 60:
+            found = self.engine().branches(self.root)
+            self.branch_list = (time.time(), found)
+        return dict(found, selected={"head": self.head, "base": self.base})
+
+    def source(self, rel, side):
+        engine = self.engine()
+        if side == "base":
+            return engine.base_source(self.root, self.base, rel, self.rev)
+        return engine.head_source(self.root, self.rev, rel)
+
+    def narrative(self, agent, model):
+        r = self.result
+        if not r:
+            raise RuntimeError("no review selected")
+        facts = []
+        for f in r["functions"]:
+            facts.append(f"{f['file']}::{f['name']} {f['status']}, risk {f['risk']}, "
+                         f"callers {', '.join(f['blast']['callers'][:8]) or 'none'}")
+            facts += [f"  - {c['severity']}: {c['why']}" + (f" ({c['before']} -> {c['after']})" if c.get("before") and c.get("after") else "")
+                      + (f" @ {f['file']}:{c['head_line']}" if c.get("head_line") else "") for c in f["changes"]]
+        facts += [f"gate {g['id']} {g['op']}" for g in r["gates"]]
+        paths = [x["path"] for x in r["files"] if not x["generated"] and not x["test"]][:30]
+        span = [r["base"]["rev"]] + ([self.rev] if self.rev else [])
+        hunks = self.engine().git(self.root, "diff", "-U3", *span, "--", *paths).decode("utf-8", "replace") if paths else ""
+        pr = r.get("pr") or {}
+        prompt = (NARRATIVE_PROMPT + "\n# PR description\n" + (f"{pr.get('title', '')}\n{pr.get('body') or ''}" if pr else "(none)")
+                  + "\n\n# Facts\n" + "\n".join(facts) + "\n\n# Hunks\n" + hunks[:60000])
+        cache = Path.home() / ".cache" / "ariadne" / "narratives" / (
+            hashlib.sha1(f"{prompt}\0{agent}\0{model}".encode()).hexdigest() + ".json")
+        if cache.exists():
+            return json.loads(cache.read_text())
+        out = extract_json(ask_agent(agent, model, "", prompt, self.root, 600))
+        lengths = {}
+
+        def verified(ref):
+            m = REF_RE.match(ref) if isinstance(ref, str) else None
+            if not m or m[1] not in paths:
+                return False
+            if m[1] not in lengths:
+                lengths[m[1]] = len((self.source(m[1], "head") or "").splitlines())
+            return 1 <= int(m[2]) <= lengths[m[1]]
+
+        items = [{"text": str(i["text"]), "refs": [x for x in i.get("refs", []) if verified(x)]}
+                 for i in out.get("items", []) if isinstance(i, dict) and i.get("text")]
+        result = {"summary": str(out.get("summary", "")), "items": items,
+                  "mismatches": [str(x) for x in out.get("mismatches", []) if x]}
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(result))
+        return result
+
+
+def pr_info(repo, n):
+    """Title, description and URL of pull request n, from gh (None without gh or a GitHub remote)."""
+    if shutil.which("gh") is None:
+        return {"number": int(n), "title": "", "body": "", "url": ""}
+    try:
+        r = subprocess.run(["gh", "pr", "view", str(int(n)), "--json", "number,title,body,url"], cwd=repo,
+                           capture_output=True, text=True, timeout=20, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        r = None
+    if r is None or r.returncode != 0:
+        return {"number": int(n), "title": "", "body": "", "url": ""}
+    return json.loads(r.stdout)
+
+
+def checkout(root, tree, rev):
+    """Check rev out in the cache's worktree (created on first use)."""
+    if (tree / ".git").exists() and git(tree, "checkout", "--quiet", "--detach", "--force", rev) is not None:
+        return
+    git(root, "worktree", "prune")
+    shutil.rmtree(tree, ignore_errors=True)
+    tree.parent.mkdir(parents=True, exist_ok=True)
+    if git(root, "worktree", "add", "--quiet", "--detach", str(tree), rev) is None:
+        raise RuntimeError(f"could not check out {rev[:12]} in {tree}")
+
+
+def agent_error(body):
+    """Why the agent/model in a request can't be used, or None."""
+    if not body.get("agent"):
+        return "pick an agent and model first"
+    if body["agent"] not in {a["id"] for a in AGENTS if a["installed"]}:
+        return f"{body['agent']} is not installed on the server"
+    if body.get("model") and not MODEL_RE.fullmatch(body["model"]):
+        return f"invalid model name: {body['model']}"
+    return None
+
+
 def serve(args):
     if args.target.endswith(".json"):   # older form: serve map.json --repo DIR
         map_path, repo = Path(args.target).expanduser().resolve(), repo_dir(args.repo or ".")
@@ -1129,15 +1478,15 @@ def serve(args):
     if not map_path.is_file():
         sys.exit(f"No map for {repo} yet. Run: ariadne build {args.target}")
     index = HERE / "viewer" / "index.html"
-    files = repo_files(repo)
     # Listing pi/opencode models takes seconds: do it after the server is up.
     agents_ready = threading.Event()
     threading.Thread(target=lambda: (AGENTS.extend(list_agents()), agents_ready.set()), daemon=True).start()
-    structure = Structure(repo)
-    data = json.loads(map_path.read_text())
-    parts = {p["id"]: p for p in data.get("parts", [])}
-    kinds = {e["id"]: e.get("kind", "other") for e in data.get("externals", [])}
-    below = Below(repo, files, parts, kinds, structure)
+    reviews = Reviews(repo, View(repo, map_path))
+    if getattr(args, "review", None) is not None:
+        try:
+            reviews.select(None, args.review.get("base"), args.review.get("pr"))
+        except RuntimeError as e:
+            sys.exit(f"review failed: {e}")
 
     class Handler(BaseHTTPRequestHandler):
         def send(self, code, data, ctype):
@@ -1148,42 +1497,63 @@ def serve(args):
             self.end_headers()
             self.wfile.write(data)
 
+        def json(self, result, code=200):
+            self.send(code, json.dumps(result).encode(), "application/json")
+
         def do_GET(self):
             url = urlparse(self.path)
             path, arg = url.path, lambda k: parse_qs(url.query).get(k, [""])[0]
+            view = reviews.view
             # Read-only code browsing, confined to the repo.
             if path == "/api/agents":
                 agents_ready.wait(30)
-                return self.send(200, json.dumps({"agents": AGENTS}).encode(), "application/json")
+                return self.json({"agents": AGENTS})
             if path == "/api/structure":
-                if arg("part") not in parts:
-                    return self.send(404, b'{"error": "unknown part"}', "application/json")
-                return self.send(200, json.dumps(structure.part(parts[arg("part")], kinds)).encode(), "application/json")
+                if arg("part") not in view.parts:
+                    return self.json({"error": "unknown part"}, 404)
+                return self.json(view.structure.part(view.parts[arg("part")], view.kinds))
             if path in ("/api/xray", "/api/gates", "/api/states"):
                 try:
-                    if path == "/api/xray":
-                        result = below.xray(arg("file"), int(arg("line") or 0))
+                    if path == "/api/xray" and arg("rev") in ("base", "head"):
+                        text = reviews.source(arg("file"), arg("rev"))
+                        result = view.below.xray(arg("file"), int(arg("line") or 0), text) if text is not None else \
+                            {"status": "error", "error": f"{arg('file')} is not in the {arg('rev')} version"}
+                    elif path == "/api/xray":
+                        result = view.below.xray(arg("file"), int(arg("line") or 0))
                     elif path == "/api/gates":
-                        result = below.gates(arg("part") or None)
-                    elif arg("part") in parts:
-                        result = below.states(arg("part"))
+                        result = view.below.gates(arg("part") or None)
+                    elif arg("part") in view.parts:
+                        result = view.below.states(arg("part"))
                     else:
                         result = {"status": "error", "error": "unknown part"}
                 except (RuntimeError, ValueError) as e:
                     result = {"status": "error", "error": str(e)}
-                return self.send(200, json.dumps(result).encode(), "application/json")
+                return self.json(result)
+            if path in ("/api/review", "/api/branches", "/api/diff", "/api/map/status", "/api/map/progress"):
+                try:
+                    if path == "/api/review":
+                        result = reviews.result or {"status": "none"}
+                    elif path == "/api/branches":
+                        result = reviews.branches(fresh=arg("fresh") == "1")
+                    elif path == "/api/diff":
+                        result = reviews.engine().diff_file(repo, reviews.base, arg("file"), reviews.rev)
+                    elif path == "/api/map/status":
+                        result = reviews.status()
+                    else:
+                        result = reviews.progress() or {"phase": None, "done": True}
+                except (RuntimeError, ValueError) as e:
+                    result = {"status": "error", "error": str(e)}
+                return self.json(result)
             if path == "/api/tree":
-                found = [f for f in files if in_dir(f, arg("dir"))][:5000]
-                return self.send(200, json.dumps({"files": found}).encode(), "application/json")
+                return self.json({"files": [f for f in view.files if in_dir(f, arg("dir"))][:5000]})
             if path == "/api/file":
-                doc = read_file(repo, arg("path"))
-                return self.send(200 if doc else 404, json.dumps(doc or {"error": "not a readable file"}).encode(), "application/json")
+                doc = read_file(view.repo, arg("path"))
+                return self.json(doc or {"error": "not a readable file"}, 200 if doc else 404)
             if path == "/api/grep":
-                hits = grep(repo, files, arg("q"), arg("dir"))
-                return self.send(200, json.dumps({"hits": hits}).encode(), "application/json")
+                return self.json({"hits": grep(view.repo, view.files, arg("q"), arg("dir"))})
             src = {"/": (index, "text/html; charset=utf-8"),
                    "/index.html": (index, "text/html; charset=utf-8"),
-                   "/map.json": (map_path, "application/json")}.get(path)
+                   "/map.json": (view.map_path, "application/json")}.get(path)
             if src is None and re.fullmatch(r"/[\w.-]+\.(js|css)", path):
                 kind = "text/javascript" if path.endswith(".js") else "text/css"
                 src = (index.parent / path[1:], kind + "; charset=utf-8")
@@ -1193,31 +1563,53 @@ def serve(args):
                 self.send(404, b"not found", "text/plain")
 
         def do_POST(self):
-            if self.path == "/api/xray/explain":
+            try:
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+                if not isinstance(body, dict):
+                    raise ValueError("expected a JSON object")
+            except ValueError as e:
+                return self.json({"error": f"bad request: {e}"}, 400)
+            view = reviews.view
+            if self.path in ("/api/xray/explain", "/api/review/narrative"):
                 try:
-                    body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
                     agents_ready.wait(30)
-                    if body.get("agent") not in {a["id"] for a in AGENTS if a["installed"]}:
-                        raise RuntimeError(f"{body.get('agent')} is not installed on the server")
-                    result = below.explain(body["file"], int(body["line"]), body["agent"], body.get("model") or "")
+                    if error := agent_error(body):
+                        raise RuntimeError(error)
+                    if self.path == "/api/xray/explain":
+                        result = view.below.explain(body["file"], int(body["line"]), body["agent"], body.get("model") or "")
+                    else:
+                        result = reviews.narrative(body["agent"], body.get("model") or "")
                 except (RuntimeError, ValueError, KeyError) as e:
-                    result = {"labels": {}, "error": str(e)}
-                return self.send(200, json.dumps(result).encode(), "application/json")
+                    result = {"error": str(e)} | ({"labels": {}} if self.path == "/api/xray/explain" else {})
+                return self.json(result)
+            if self.path in ("/api/review/select", "/api/map/refresh"):
+                try:
+                    if self.path == "/api/review/select":
+                        result = reviews.select(body.get("head"), body.get("base"))
+                    else:
+                        agents_ready.wait(30)
+                        if reviews.status()["needs_model"] and (error := agent_error(body)):
+                            raise RuntimeError(error)
+                        reviews.refresh(body.get("agent"), body.get("model"))
+                        result = {"started": True}
+                except (RuntimeError, ValueError) as e:
+                    result = {"status": "error", "error": str(e)}
+                return self.json(result)
             if self.path != "/api/chat":
                 return self.send(404, b"not found", "text/plain")
+            agents_ready.wait(30)
             try:
-                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
-                agents_ready.wait(30)
-                result = chat(body, map_path, repo)
+                result = chat(body, view.map_path, view.repo)
             except (ValueError, AttributeError) as e:
                 result = {"reply": f"Bad request: {e}", "actions": []}
-            self.send(200, json.dumps(result).encode(), "application/json")
+            self.json(result)
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     url = f"http://{'127.0.0.1' if args.host == '0.0.0.0' else args.host}:{args.port}"
     print(f"ariadne on {url}", file=sys.stderr)
     if getattr(args, "open_browser", False):   # only now is the port listening
-        threading.Thread(target=webbrowser.open, args=(url,), daemon=True).start()
+        page = url + ("/#review" if getattr(args, "review", None) is not None else "")
+        threading.Thread(target=webbrowser.open, args=(page,), daemon=True).start()
     server.serve_forever()
 
 
@@ -1229,36 +1621,41 @@ def main():
     b = sub.add_parser("build", help="map a repo with an agent CLI")
     a = sub.add_parser("assemble", help="merge part files into a map (advanced)")
     s = sub.add_parser("serve", help="serve the viewer for a mapped repo")
-    for p in (o, b):
+    r = sub.add_parser("pr", help="review the checkout's changes against the default branch (or --base)")
+    r.add_argument("--pr", type=int, help="pull request number, for its title and description (needs gh)")
+    for p in (o, b, r):
         p.add_argument("repo", nargs="?", default=".", help="repo folder (default: current folder)")
         p.add_argument("--jobs", type=int, help="parallel agent runs (default: one per batch)")
         p.add_argument("--batches", type=int, help="number of batches (default: by repo size, up to 16)")
     a.add_argument("parts", nargs="+")
     a.add_argument("--repo", required=True)
-    for p in (o, b, a):
+    for p in (o, b, a, r):
         p.add_argument("-o", "--output", help="map file (default: ~/.local/share/ariadne/maps/)")
         p.add_argument("--base", help="git revision to count changed files against")
         p.add_argument("--no-llm", action="store_true", help="cluster by folder, no system flows")
         p.add_argument("--agent", help="claude | pi | opencode | codex (asked if missing)")
         p.add_argument("--model", help="e.g. sonnet, haiku, deepseek/deepseek-flash (asked if missing)")
         p.add_argument("--yes", action="store_true", help="don't ask for confirmation")
+        p.add_argument("--fresh", action="store_true", help="re-map every part, ignoring the cache")
     s.add_argument("target", nargs="?", default=".", help="repo folder (default: current folder)")
     s.add_argument("--map", help="map file (default: the one `ariadne build` wrote)")
     s.add_argument("--repo", help=argparse.SUPPRESS)
-    for p in (o, s):
+    for p in (o, s, r):
         p.add_argument("--port", type=int, default=7777)
         p.add_argument("--host", default="127.0.0.1", help="0.0.0.0 to allow other devices")
     argv = sys.argv[1:]
-    if not argv or argv[0] not in {"open", "build", "assemble", "serve", "-h", "--help"}:
+    if not argv or argv[0] not in {"open", "build", "assemble", "serve", "pr", "-h", "--help"}:
         argv = ["open"] + argv
     args = ap.parse_args(argv)
-    if args.cmd == "open":
+    if args.cmd in ("open", "pr"):
         repo = repo_dir(args.repo)
         args.output = args.output or str(default_map(repo))
         if not Path(args.output).is_file():
             build(args)
         args.target, args.map, args.repo = str(repo), args.output, None
         args.open_browser = True
+        if args.cmd == "pr":   # --base is the review's base here, not the map's
+            args.review = {"base": args.base, "pr": args.pr}
         serve(args)
     else:
         {"build": build, "assemble": assemble, "serve": serve}[args.cmd](args)

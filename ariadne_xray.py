@@ -86,13 +86,22 @@ NOISE_WORDS = {"log", "logger", "logging", "slog", "console", "fmt", "span", "tr
 
 
 def xray(path: Path, line: int, rel: str, known_functions: set[str], effect_targets: dict[int, str]) -> dict:
-    lang = LANGS.get(Path(path).suffix.lower())
-    if lang is None:
-        return {"status": "unsupported", "error": f"no x-ray for {Path(path).suffix or 'extensionless'} files"}
+    if Path(path).suffix.lower() not in LANGS:
+        return xray_text(b"", line, str(path), known_functions, effect_targets)
     try:
         src = Path(path).read_bytes()
     except OSError as e:
         return {"status": "error", "error": f"cannot read {rel}: {e.strerror}"}
+    return xray_text(src, line, rel, known_functions, effect_targets)
+
+
+def xray_text(src: bytes | str, line: int, rel: str, known_functions: set[str], effect_targets: dict[int, str]) -> dict:
+    """xray() on source text (e.g. a file at another git revision); the language comes from rel's extension."""
+    lang = LANGS.get(Path(rel).suffix.lower())
+    if lang is None:
+        return {"status": "unsupported", "error": f"no x-ray for {Path(rel).suffix or 'extensionless'} files"}
+    if isinstance(src, str):
+        src = src.encode()
     rows = src.split(b"\n")
     if not 1 <= line <= len(rows):
         return {"status": "error", "error": f"line {line} is outside {rel} ({len(rows)} lines)"}
@@ -125,6 +134,24 @@ def find_function(root, row, lang):
         if body is None or row < max(body.start_point[0], fn.start_point[0] + 1):
             return fn
     return found[-1] if found else block
+
+
+def functions(root, lang):
+    """Every function a reader would name, in source order: declared functions and methods at any depth,
+    closures assigned to a name, and closures outside any function (route handlers). Like find_function,
+    a Ruby block outside any method (Sinatra route) counts as a function."""
+    out, todo = [], [(root, False)]
+    while todo:
+        n, inside = todo.pop()
+        if n.type in FUNCS:
+            if n.type not in CLOSURES or not inside or assigned_name(n) is not None:
+                out.append(n)
+            inside = True
+        elif lang == "ruby" and not inside and n.type == "call" and n.child_by_field_name("block") is not None:
+            out.append(n)
+            inside = True
+        todo += [(c, inside) for c in reversed(n.named_children)]
+    return out
 
 
 def body_of(fn):

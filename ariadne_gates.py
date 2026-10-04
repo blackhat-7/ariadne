@@ -94,12 +94,13 @@ PROTO_ENUM = re.compile(r"[A-Z]\w*[a-z]\w*?_([A-Z][A-Z0-9_]+)")  # Go protobuf: 
 class Src:
     """One parsed source file."""
 
-    def __init__(self, repo, rel):
-        self.rel, self.lang = rel, LANGS.get(Path(rel).suffix.lower())
-        try:
-            self.text = (repo / rel).read_bytes()
-        except OSError:
-            self.text = b""
+    def __init__(self, repo, rel, text=None):
+        self.rel, self.lang, self.text = rel, LANGS.get(Path(rel).suffix.lower()), text
+        if text is None:
+            try:
+                self.text = (repo / rel).read_bytes()
+            except OSError:
+                self.text = b""
         self._root = None
 
     @property
@@ -442,10 +443,11 @@ def _refs_field(src, cond, fields):
     return found
 
 
-def gates(repo, files, part_of, fn_at):
-    """XRAY.md gates (without "lines") for repo-relative source files."""
-    repo = Path(repo)
-    srcs = {f: Src(repo, f) for f in files if LANGS.get(Path(f).suffix.lower())}
+def gates(repo, files, part_of, fn_at, texts=None):
+    """XRAY.md gates (without "lines") for repo-relative source files. texts: {file: bytes} to use instead of
+    the files on disk (another git revision)."""
+    repo, texts = Path(repo), texts or {}
+    srcs = {f: Src(repo, f, texts.get(f)) for f in files if LANGS.get(Path(f).suffix.lower())}
     found = {}  # gate id -> {"kind", "name", "reads": {ref: node info}, "checks": {ref: text}, "defaults": []}
     fields = defaultdict(lambda: defaultdict(set))  # part -> field -> gate ids
     fn_cache = {}
