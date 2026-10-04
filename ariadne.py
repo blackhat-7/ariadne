@@ -6,6 +6,7 @@
   ariadne.py serve <map.json> --repo <dir> [--port 7777]
 """
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -15,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import webbrowser
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -23,6 +25,19 @@ from urllib.parse import parse_qs, urlparse
 
 HERE = Path(__file__).resolve().parent
 SCHEMA = HERE / "SCHEMA.md"
+# Maps hold excerpts of the mapped code, so they live outside the repo by default.
+MAPS = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "ariadne" / "maps"
+
+
+def repo_dir(arg):
+    path = Path(arg).expanduser().resolve()
+    if not path.is_dir():
+        sys.exit(f"No such folder: {arg}")
+    return path
+
+
+def default_map(repo):
+    return MAPS / f"{repo.name}-{hashlib.sha1(str(repo).encode()).hexdigest()[:8]}.map.json"
 MARKERS = {"go.mod", "package.json", "pyproject.toml", "setup.py", "requirements.txt", "Cargo.toml",
            "pom.xml", "build.gradle", "build.gradle.kts", "project.json", "Gemfile", "composer.json",
            "CMakeLists.txt", "mix.exs", "pubspec.yaml", "Package.swift", "Dockerfile"}
@@ -236,7 +251,7 @@ def choose_model(args, summary):
         sys.exit("no agent CLI found: install claude, pi, opencode or codex")
     interactive = sys.stdin.isatty()
     if not (args.agent and args.model) and not interactive:
-        sys.exit("pass --agent and --model (e.g. --agent claude --model sonnet); see README for costs")
+        sys.exit("pass --agent and --model, e.g. --agent claude --model sonnet")
     print(summary, file=sys.stderr)
     if not args.agent:
         for i, a in enumerate(agents, 1):
@@ -270,7 +285,9 @@ def choose_model(args, summary):
 
 
 def build(args):
-    repo = Path(args.repo).resolve()
+    repo = repo_dir(args.repo)
+    args.output = args.output or str(default_map(repo))
+    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     files = repo_files(repo)
     slices = find_slices(repo, files)
     if not slices:
@@ -459,7 +476,8 @@ def llm_overview(parts, part_ids, externals, known_refs, repo, agent, model):
 
 
 def assemble(args):
-    repo = Path(args.repo).resolve()
+    repo = repo_dir(args.repo)
+    args.output = args.output or "map.json"
     parts, ids = [], set()
     for f in args.parts:
         for p in json.loads(Path(f).read_text()).get("parts", []):
@@ -870,7 +888,13 @@ def effects(nodes, part, kinds):
 
 
 def serve(args):
-    map_path, repo = Path(args.map).resolve(), Path(args.repo).resolve()
+    if args.target.endswith(".json"):   # older form: serve map.json --repo DIR
+        map_path, repo = Path(args.target).expanduser().resolve(), repo_dir(args.repo or ".")
+    else:
+        repo = repo_dir(args.target)
+        map_path = Path(args.map).expanduser().resolve() if args.map else default_map(repo)
+    if not map_path.is_file():
+        sys.exit(f"No map for {repo} yet. Run: ariadne build {args.target}")
     index = HERE / "viewer" / "index.html"
     files = repo_files(repo)
     AGENTS[:] = list_agents()
@@ -934,29 +958,47 @@ def serve(args):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Map a codebase and serve the 3D viewer.")
-    sub = ap.add_subparsers(dest="cmd", required=True)
-    b = sub.add_parser("build", help="map a repo with an agent CLI, then assemble")
-    b.add_argument("repo")
-    b.add_argument("--jobs", type=int, default=6, help="concurrent claude runs")
-    b.add_argument("--batches", type=int, default=7, help="number of slice batches")
-    a = sub.add_parser("assemble", help="merge part files into map.json")
+    ap = argparse.ArgumentParser(prog="ariadne", description="Map a codebase and explore it in 3D.",
+                                 epilog="Run `ariadne` in a repo to map it (first time) and open the viewer.")
+    sub = ap.add_subparsers(dest="cmd")
+    o = sub.add_parser("open", help="map the repo if needed, then serve it and open the browser (default)")
+    b = sub.add_parser("build", help="map a repo with an agent CLI")
+    a = sub.add_parser("assemble", help="merge part files into a map (advanced)")
+    s = sub.add_parser("serve", help="serve the viewer for a mapped repo")
+    for p in (o, b):
+        p.add_argument("repo", nargs="?", default=".", help="repo folder (default: current folder)")
+        p.add_argument("--jobs", type=int, default=6, help="parallel agent runs")
+        p.add_argument("--batches", type=int, default=7, help="number of slice batches")
     a.add_argument("parts", nargs="+")
     a.add_argument("--repo", required=True)
-    for p in (a, b):
-        p.add_argument("-o", "--output", default="map.json")
+    for p in (o, b, a):
+        p.add_argument("-o", "--output", help="map file (default: ~/.local/share/ariadne/maps/)")
         p.add_argument("--base", help="git revision to count changed files against")
         p.add_argument("--no-llm", action="store_true", help="cluster by folder, no system flows")
         p.add_argument("--agent", help="claude | pi | opencode | codex (asked if missing)")
-        p.add_argument("--model", help="e.g. sonnet, haiku, opus, deepseek/deepseek-flash (asked if missing)")
+        p.add_argument("--model", help="e.g. sonnet, haiku, deepseek/deepseek-flash (asked if missing)")
         p.add_argument("--yes", action="store_true", help="don't ask for confirmation")
-    s = sub.add_parser("serve", help="serve viewer, map and chat")
-    s.add_argument("map")
-    s.add_argument("--repo", required=True)
-    s.add_argument("--port", type=int, default=7777)
-    s.add_argument("--host", default="127.0.0.1", help="0.0.0.0 to allow other devices")
-    args = ap.parse_args()
-    {"build": build, "assemble": assemble, "serve": serve}[args.cmd](args)
+    s.add_argument("target", nargs="?", default=".", help="repo folder (default: current folder)")
+    s.add_argument("--map", help="map file (default: the one `ariadne build` wrote)")
+    s.add_argument("--repo", help=argparse.SUPPRESS)
+    for p in (o, s):
+        p.add_argument("--port", type=int, default=7777)
+        p.add_argument("--host", default="127.0.0.1", help="0.0.0.0 to allow other devices")
+    argv = sys.argv[1:]
+    if not argv or argv[0] not in {"open", "build", "assemble", "serve", "-h", "--help"}:
+        argv = ["open"] + argv
+    args = ap.parse_args(argv)
+    if args.cmd == "open":
+        repo = repo_dir(args.repo)
+        args.output = args.output or str(default_map(repo))
+        if not Path(args.output).is_file():
+            build(args)
+        args.target, args.map, args.repo = str(repo), args.output, None
+        url = f"http://{'127.0.0.1' if args.host == '0.0.0.0' else args.host}:{args.port}"
+        threading.Timer(1.5, lambda: webbrowser.open(url)).start()
+        serve(args)
+    else:
+        {"build": build, "assemble": assemble, "serve": serve}[args.cmd](args)
 
 
 if __name__ == "__main__":

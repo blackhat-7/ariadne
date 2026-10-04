@@ -8,25 +8,28 @@ Ariadne turns a codebase into a 3D map you can explore: its services, how they t
 
 ## Install
 
-You need Python 3.10+, git, and one coding agent CLI: [Claude Code](https://docs.claude.com/en/docs/claude-code), [pi](https://github.com/earendil-works/pi), [opencode](https://opencode.ai) or [codex](https://github.com/openai/codex). For the function-level view, also install [uv](https://docs.astral.sh/uv/).
+You need [uv](https://docs.astral.sh/uv/getting-started/installation/) and one coding agent CLI: [Claude Code](https://docs.claude.com/en/docs/claude-code), [pi](https://github.com/earendil-works/pi), [opencode](https://opencode.ai) or [codex](https://github.com/openai/codex).
 
 ```sh
-git clone https://github.com/blackhat-7/ariadne
-cd ariadne
+uv tool install git+https://github.com/blackhat-7/ariadne
 ```
-
-No other dependencies.
 
 ## Use
 
 ```sh
-python3 ariadne.py build ~/code/my-repo -o my-repo.map.json
-python3 ariadne.py serve my-repo.map.json --repo ~/code/my-repo
+cd ~/code/your-repo
+ariadne
 ```
 
-Open http://127.0.0.1:7777.
+The first run maps the repo: it shows a usage estimate and asks which agent and model to use. Then it opens the map in your browser. Later runs open it straight away.
 
-`build` shows a usage estimate and asks which agent and model to use. To skip the questions: `--agent claude --model sonnet --yes`.
+| Command | Does |
+|---|---|
+| `ariadne [folder]` | Map if needed, then open |
+| `ariadne build [folder]` | Map again (after big changes) |
+| `ariadne serve [folder]` | Open without mapping |
+
+Skip the questions with `--agent claude --model sonnet --yes`.
 
 ## In the app
 
@@ -41,7 +44,7 @@ Pinch or scroll to zoom, drag to rotate, `/` to search, `Esc` to go back.
 ## Notes
 
 - Everything runs locally. Your agent CLI sends the code it reads to its provider.
-- Map files contain snippets of your code. Keep them private.
+- Maps are saved in `~/.local/share/ariadne/maps/`, not in your repo. They contain snippets of your code.
 - `serve --host 0.0.0.0` makes the map and your code reachable from your network.
 - Every `file:line` in a map is checked; anything that doesn't match is marked ⚠.
 
