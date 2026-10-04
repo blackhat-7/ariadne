@@ -1,11 +1,12 @@
 // chat.js
 // Exports: saveCfg, loadAgents, renderCfg, filterModels, pickModel, history, probeChat, md, addMsg, initSettings, initChat
-// Imports: state: state | drawer: getJSON | hud: level, openCode | main: act | scene: player | util: $, clamp, esc
+// Imports: state: state | drawer: getJSON | hud: level, openCode | main: act | scene: player | theme: LOOK | util: $, clamp, esc
 import { state } from './state.js';
 import { getJSON } from './drawer.js';
 import { level, openCode } from './hud.js';
 import { act } from './main.js';
 import { player } from './scene.js';
+import { LOOK } from './theme.js';
 import { $, clamp, esc } from './util.js';
 
 export let saveCfg, history;
@@ -72,7 +73,7 @@ export function md(src) {
 export function addMsg(role, html) { const d = document.createElement('div'); d.className = 'msg ' + role; d.innerHTML = html; $('#chatlog').appendChild(d); $('#chatlog').scrollTop = 1e9; return d; }
 
 export function initSettings() {
-  /* ---------------- settings: chat agent + model ---------------- */
+  /* ---------------- settings: appearance, chat agent + model ---------------- */
   state.agentList = [];
   state.chatCfg = { agent: 'claude', model: '' };
   try { Object.assign(state.chatCfg, JSON.parse(localStorage.getItem('ariadne.chat') || '{}')); } catch { /* storage blocked */ }
@@ -82,6 +83,14 @@ export function initSettings() {
   $('#gear').onclick = () => { $('#settings').hidden = !$('#settings').hidden; };
   $('#chatmeta').onclick = () => { $('#settings').hidden = false; $('#model').focus(); };
   $('#setdone').onclick = () => { $('#settings').hidden = true; };
+  // Appearance: the world is built once per look, so switching saves the choice and reloads (the URL keeps it too).
+  $(`#looks [data-look="${LOOK}"]`).classList.add('on');
+  $('#looks').onclick = (e) => {
+    const look = e.target.closest('[data-look]')?.dataset.look;
+    if (!look || look === LOOK) return;
+    try { localStorage.setItem('ariadne.theme', look); } catch { /* storage blocked: the URL still carries it */ }
+    const u = new URL(location.href); u.searchParams.set('theme', look); location.replace(u);
+  };
   $('#agents').onclick = (e) => { const b = e.target.closest('[data-agent]'); if (!b || b.disabled || b.dataset.agent === state.chatCfg.agent) return; state.chatCfg.agent = b.dataset.agent; state.chatCfg.model = ''; state.chatCfg.picked = false; saveCfg(); };
   $('#model').addEventListener('input', filterModels);
   $('#model').addEventListener('keydown', (e) => {

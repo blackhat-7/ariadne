@@ -1,6 +1,6 @@
 // scene.js
 // Exports: solidMats, shadowMat, lineRes, spinTime, bgColor, fatLoop, slab, stage, renderer, scene, camera, controls, rt, composer, bloom, uTime, nodeMats, ATLAS, CELL, atlasCv, atlasCtx, atlasCells, LUCIDE, atlasTex, atlasCell, iconMat, lineMat, tubeMat, shellMat, LineSet, curve, parts, clusters, exts, docks, nodes, nodeByKey, meshes, linkSet, trackSet, streams, at, merge, G, SHAPES, AMBER, addNode, shapeOfPart, partScale, build, buildDetail, kindOn, recolor, setEmphasis, dimOf, camPos, updateLOD, fly, fv, flyTo, updateViewOffset, updateFly, flyOverview, flyToEnt, resolveEnt, entFromNode, findEnt, select, labelOf, dive, ray, ndc, pick, entFromEvent, player, MOVE, STEP, pulseTex, pulse, trailGeo, trail, flowById, actorPos, actorKey, playFlow, gotoStep, stopFlow, pv, updatePlayer, isMac, isTrackpad, navPlane, navP, navN, navR, navU, zoomAt, panBy, gestureOpts, initThreeSetup, initShaders, initWorldModel, initState, initLod, initCameraFlight, initPicking, initFlowPlayback, initNavigation
-// Imports: state: state | board: boardNear, flyToBoard, openLens, setFacing, updateStructs | drawer: codeHtml, drawer, openFile | hud: Label, closeDetail, detail, hoverEl, openCode, showDetail | theme: EXT, KINDS, PORTS, THEME, extOf, kindOf | util: $, V3, clamp, ease, esc, hashStr, rng, smooth | voice: cancelSpeech, pauseSpeech, renderVoiceButton, resumeSpeech, speak, stepSpeech, voice
+// Imports: state: state | board: boardNear, flyToBoard, openLens, setFacing, updateStructs | drawer: codeHtml, drawer, openFile | hud: Label, closeDetail, detail, hoverEl, openCode, showDetail | theme: EXT, KINDS, PORTS, THEME, VOXEL, extOf, kindOf | util: $, V3, clamp, ease, esc, hashStr, rng, smooth | voice: cancelSpeech, pauseSpeech, renderVoiceButton, resumeSpeech, speak, stepSpeech, voice | voxel: BOX, CUBE, RING, followSun, setIslandAlpha, setupVoxel, uWorld, voxCart, voxEntries, voxIsland, voxMesh | voxels: cart, externalModel, partModel
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -17,12 +17,14 @@ import { state } from './state.js';
 import { boardNear, flyToBoard, openLens, setFacing, updateStructs } from './board.js';
 import { codeHtml, drawer, openFile } from './drawer.js';
 import { Label, closeDetail, detail, hoverEl, openCode, showDetail } from './hud.js';
-import { EXT, KINDS, PORTS, THEME, extOf, kindOf, mute } from './theme.js';
+import { EXT, KINDS, PORTS, THEME, VOXEL, extOf, kindOf, mute } from './theme.js';
 import { $, V3, clamp, ease, esc, hashStr, reducedMotion, rng, smooth, spring } from './util.js';
 import { cancelSpeech, pauseSpeech, renderVoiceButton, resumeSpeech, speak, speakFlow, stepSpeech, voice } from './voice.js';
+import { BOX, CUBE, RING, followSun, setIslandAlpha, setupVoxel, uWorld, voxCart, voxEntries, voxIsland, voxMesh } from './voxel.js';
+import { cart, externalModel, partModel } from './voxels.js';
 
 export let stage, renderer, scene, camera, controls, rt, composer, bloom, uTime, nodeMats, ATLAS, CELL, atlasCv, atlasCtx, atlasCells, LUCIDE, atlasTex, iconMat, lineMat, tubeMat, shellMat, parts, clusters, exts, docks, nodes, nodeByKey, meshes, linkSet, trackSet, streams, at, merge, G, SHAPES, AMBER, shapeOfPart, partScale, kindOn, dimOf, camPos, fly, fv, flyOverview, ray, ndc, player, MOVE, STEP, pulseTex, pulse, trailGeo, trail, pv, isMac, navPlane, navP, navN, navR, navU, gestureOpts, solidMats, shadowMat, lineRes, spinTime, bgColor;
-let glassMat, floorShadowMat;
+let glassMat, floorShadowMat, floorShadowGeo;
 
 export function atlasCell(name) {
   if (atlasCells.has(name)) return atlasCells.get(name);
@@ -184,6 +186,7 @@ export function build() {
       const th = (j / ring.list.length) * Math.PI * 2 + a + k * 0.6;
       p.pos = new V3(c.pos.x + Math.cos(th) * ring.radius, c.pos.y, c.pos.z + Math.sin(th) * ring.radius);
       p.r = partScale(p);
+      if (VOXEL) { p.r *= 1.5; p.pos.y = c.pos.y - 1.2 + p.r; }   // a little bigger beside terrain voxels; standing on the island (base at pos.y - r)
       p.clusterObj = c;
     }));
   });
@@ -229,38 +232,19 @@ export function build() {
       const rr = d.members.length === 1 ? 0 : 4.6 * Math.sqrt(i + 0.5), th = i * 2.39996 + d.angle;
       e.pos = new V3(d.pos.x + Math.cos(th) * rr, 0, d.pos.z + Math.sin(th) * rr);
       e.r = 0.75 + 0.2 * Math.sqrt(e.users.size);
+      if (VOXEL) { e.r *= 1.7; e.pos.y = -1 + e.r; }   // bigger beside terrain voxels; standing on the dock island, whose top is y = -1
     });
   }
   state.overviewDist = state.Rext * 1.75;
 
-  // ---- scene: environment ----
+  // ---- scene: environment; clusters: glass plates (Voxel: floating islands) ----
   const floorY = Math.min(...[...clusters.values()].map((c) => c.pos.y)) - 22;
-  const grid = new THREE.GridHelper(state.Rext * 6, 60, THEME.grid.major, THEME.grid.minor);
-  grid.material.transparent = true; grid.material.opacity = 0.35; grid.material.depthWrite = false; grid.position.y = floorY; grid.renderOrder = -5; scene.add(grid);
-  // a faint stage under everything, so the platforms' soft shadows have something to land on
-  const stageR = state.Rext * 2.2;
-  const floor = new THREE.Mesh(new THREE.CircleGeometry(stageR, 96).rotateX(-Math.PI / 2), new THREE.ShaderMaterial({
-    transparent: true, depthWrite: false,
-    vertexShader: 'varying vec2 vP; void main(){ vP = position.xz; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.); }',
-    fragmentShader: `varying vec2 vP; void main(){ float d = length(vP) / ${stageR.toFixed(1)}; gl_FragColor = vec4(vec3(0.62, 0.68, 0.8), 0.009 * (1.0 - smoothstep(0.0, 1.0, d))); }`,
-  }));
-  floor.position.y = floorY - 0.05; floor.renderOrder = -4; scene.add(floor);
-  const orbit = fatLoop([circle(state.Rext, -0.01, 256)], THEME.orbit.color, THEME.orbit.opacity, 1); scene.add(orbit);
-
-  // ---- clusters: glass plates, hairline outlines, ring guides, floor shadows ----
-  const floorShadow = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+  if (!VOXEL) glassStage(floorY);
   for (const c of cl) {
-    c.plateY = c.pos.y - 3.2;
-    const R = c.r * 1.08, H = 0.5, BR = 0.2, hex = regular(6, R, Math.PI / 6), cr = R * 0.07;
-    c.shell = new THREE.Group(); c.shell.position.set(c.pos.x, c.plateY, c.pos.z);
-    c.fillMat = glassMat(c.colorObj);
-    const plate = new THREE.Mesh(slab(hex, cr, H, BR, 4), c.fillMat); plate.renderOrder = -2;
-    const edge = fillet(v2(hex), cr, true, 6).map((p) => { const l = p.length(); return new V3(p.x * (l - BR) / l, H / 2 + 0.01, p.y * (l - BR) / l); });
-    const outline = fatLoop([edge], c.colorObj, 0.6, 1); c.edgeMat = outline.material;
-    c.shell.add(plate, outline); scene.add(c.shell);
-    c.ring = fatLoop(c.rings.filter((g) => g.radius).map((g) => circle(g.radius, 0, 160)), c.colorObj, 0, 1);
-    c.ring.position.set(c.pos.x, c.plateY + H / 2 + 0.02, c.pos.z); c.ringMat = c.ring.material; scene.add(c.ring);
-    const sh = new THREE.Mesh(floorShadow, floorShadowMat); sh.scale.setScalar(R * 2.8); sh.position.set(c.pos.x, floorY, c.pos.z); sh.renderOrder = -3; scene.add(sh);
+    if (VOXEL) {
+      c.plateY = c.pos.y - 1.2;
+      c.shell = voxIsland(hashStr(c.id), c.r * 1.08, c.color, c.pos.x, c.pos.z, c.plateY); scene.add(c.shell);
+    } else glassPlate(c, floorY);
     const top = new V3(c.pos.x, c.plateY, c.pos.z + c.r * 1.05);
     c.label = new Label(`<b>${esc(c.name)}</b><i>${c.parts.length} parts</i>`, 'lb-cluster', top, 100, { style: `--c:${c.color}`, ent: { type: 'cluster', id: c.id }, mode: 'below', dy: 6 });
     const out = new V3(c.pos.x, 0, c.pos.z).normalize(); if (!out.lengthSq()) out.set(0, 0, 1);
@@ -271,7 +255,7 @@ export function build() {
   for (const p of parts.values()) {
     const k = kindOf(p);
     p.node = addNode(p.id, 'part', shapeOfPart(p), p.pos, p.r, p.clusterObj.color, { part: p });
-    if (k === 'tool') p.node.icons.push({ cell: 'cli', scale: p.r * 0.9, off: 0, color: THEME.amber });
+    if (k === 'tool' && !VOXEL) p.node.icons.push({ cell: 'cli', scale: p.r * 0.9, off: 0, color: THEME.amber });
     const chg = state.M.changes?.[p.id];
     p.label = new Label(`<b><span class="kd"></span>${esc(p.name || p.id)}${chg ? `<span class="chg">Δ${chg}</span>` : ''}</b>`, 'lb-part',
       new V3(p.pos.x, p.pos.y + p.r * 1.4, p.pos.z), 55 + Math.min(10, Math.sqrt(p.size || 0) / 12), { style: `--k:${p.clusterObj.color}`, ent: { type: 'part', id: p.id } });
@@ -280,12 +264,13 @@ export function build() {
   for (const d of docks.values()) {
     const k = d.kind;
     d.node = addNode(d.id, 'dock', 'dock', d.pos, d.r, EXT[k].color, { dock: d });
+    if (VOXEL) { d.island = voxIsland(hashStr(d.id), d.r, THEME.voxel.dock, d.pos.x, d.pos.z, -1); scene.add(d.island); }
     d.label = new Label(`${EXT[k].icon}<b>${esc(d.name)}</b><em>${d.members.length}</em>`, 'lb-dock', new V3(d.pos.x, d.pos.y + 2, d.pos.z - d.r * 0.2), 90, { style: `--k:${EXT[k].color}`, ent: { type: 'dock', id: d.id }, dy: 10 });
   }
   for (const e of exts.values()) {
     const k = extOf(e);
     e.node = addNode(e.id, 'external', 'ext_' + k, e.pos, e.r, EXT[k].color, { ext: e });
-    if (k === 'saas') e.node.icons.push({ cell: (e.id.match(/[A-Za-z0-9]/)?.[0] || '?').toUpperCase(), scale: e.r * 1.5, off: e.r * 0.2, color: EXT.saas.color });
+    if (k === 'saas' && !VOXEL) e.node.icons.push({ cell: (e.id.match(/[A-Za-z0-9]/)?.[0] || '?').toUpperCase(), scale: e.r * 1.5, off: e.r * 0.2, color: EXT.saas.color });
     e.label = new Label(esc(e.id), 'lb-ext', new V3(e.pos.x, e.pos.y + e.r, e.pos.z), 40, { style: `--k:${EXT[k].color}`, ent: { type: 'external', id: e.id }, dy: 3 });
   }
 
@@ -329,18 +314,31 @@ export function build() {
   // ---- instanced meshes ----
   const groups = {};
   const put = (geo, mode, e) => (groups[geo + '|' + mode] ||= []).push(e);
-  for (const n of nodes) for (const [geo, mode, gate] of SHAPES[n.shape]) put(geo, mode, { node: n, scale: n.scale, gate });
-  for (const p of parts.values()) if (state.M.changes?.[p.id]) put('chg', 0, { node: p.node, scale: p.r * 1.8, gate: 'chg', color: AMBER, y: -p.r * 1.1 });
-  for (const p of parts.values()) put('shadow', 4, { node: p.node, scale: p.r * 3.6, y: p.clusterObj.plateY + 0.27 - p.pos.y });   // contact shadow on the plate
+  if (VOXEL) {
+    // every voxel of every node is one instance of a unit cube, grouped by animation mode
+    const model = (n) => n.type === 'part' ? partModel(kindOf(n.part), hashStr(n.key), n.part.clusterObj.color)
+      : n.type === 'external' ? externalModel(extOf(n.ext), hashStr(n.key), EXT[extOf(n.ext)].color) : CUBE;
+    for (const n of nodes) {
+      if (n.type === 'dock') continue;   // docks are islands
+      const m = model(n), cube = m === CUBE;
+      for (const v of voxEntries(m, n.scale, cube, cube ? n.base : null)) put('vox', v.mode, { node: n, ...v });
+    }
+    for (const p of parts.values()) if (state.M.changes?.[p.id]) for (const v of voxEntries(RING, p.r, false, AMBER)) put('vox', 0, { node: p.node, gate: 'chg', ...v });
+  } else {
+    for (const n of nodes) for (const [geo, mode, gate] of SHAPES[n.shape]) put(geo, mode, { node: n, scale: n.scale, gate });
+    for (const p of parts.values()) if (state.M.changes?.[p.id]) put('chg', 0, { node: p.node, scale: p.r * 1.8, gate: 'chg', color: AMBER, y: -p.r * 1.1 });
+    for (const p of parts.values()) put('shadow', 4, { node: p.node, scale: p.r * 3.6, y: p.clusterObj.plateY + 0.27 - p.pos.y });   // contact shadow on the plate
+  }
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new V3(), pv = new V3();
   for (const [key, list] of Object.entries(groups)) {
     const [g, mode] = key.split('|');
-    const geo = G[g].clone();
-    const mesh = new THREE.InstancedMesh(geo, mode === '4' ? shadowMat : solidMats[+mode], list.length);
+    const geo = (g === 'vox' ? BOX : G[g]).clone();
+    const mesh = g === 'vox' ? voxMesh(geo, +mode, list.length) : new THREE.InstancedMesh(geo, mode === '4' ? shadowMat : solidMats[+mode], list.length);
     const col = new THREE.InstancedBufferAttribute(new Float32Array(list.length * 3), 3);
     const al = new THREE.InstancedBufferAttribute(new Float32Array(list.length), 1); al.setUsage(THREE.DynamicDrawUsage);
     geo.setAttribute('aColor', col); geo.setAttribute('aAlpha', al);
-    list.forEach((e, i) => { pv.copy(e.node.pos); pv.y += e.y || 0; m4.compose(pv, q, sc.setScalar(e.scale)); mesh.setMatrixAt(i, m4); });
+    if (g === 'vox' && mode === '3') geo.setAttribute('aOff', new THREE.InstancedBufferAttribute(new Float32Array(list.flatMap((e) => e.aOff)), 4));   // crates
+    list.forEach((e, i) => { pv.copy(e.node.pos); pv.y += e.y || 0; if (e.off) pv.add(e.off); m4.compose(pv, q, sc.setScalar(e.scale)); mesh.setMatrixAt(i, m4); });
     mesh.frustumCulled = false; mesh.userData.list = list; mesh.userData.alpha = al; mesh.userData.color = col; if (mode === '4') mesh.renderOrder = -1;
     meshes[key] = mesh; scene.add(mesh);
   }
@@ -354,6 +352,35 @@ export function build() {
     mesh.frustumCulled = false; mesh.renderOrder = 5; mesh.userData = { list: icons, alpha: al }; state.iconMesh = mesh; scene.add(mesh);
   }
   recolor();
+}
+
+// Glass look: a faint grid and stage under everything, so the platforms' soft shadows have something to land on, and the dock orbit.
+function glassStage(floorY) {
+  const grid = new THREE.GridHelper(state.Rext * 6, 60, THEME.grid.major, THEME.grid.minor);
+  grid.material.transparent = true; grid.material.opacity = 0.35; grid.material.depthWrite = false; grid.position.y = floorY; grid.renderOrder = -5; scene.add(grid);
+  const stageR = state.Rext * 2.2;
+  const floor = new THREE.Mesh(new THREE.CircleGeometry(stageR, 96).rotateX(-Math.PI / 2), new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false,
+    vertexShader: 'varying vec2 vP; void main(){ vP = position.xz; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.); }',
+    fragmentShader: `varying vec2 vP; void main(){ float d = length(vP) / ${stageR.toFixed(1)}; gl_FragColor = vec4(vec3(0.62, 0.68, 0.8), 0.009 * (1.0 - smoothstep(0.0, 1.0, d))); }`,
+  }));
+  floor.position.y = floorY - 0.05; floor.renderOrder = -4; scene.add(floor);
+  const orbit = fatLoop([circle(state.Rext, -0.01, 256)], THEME.orbit.color, THEME.orbit.opacity, 1); scene.add(orbit);
+}
+
+// Glass look: a cluster's glass plate, hairline outline, ring guides and floor shadow.
+function glassPlate(c, floorY) {
+  c.plateY = c.pos.y - 3.2;
+  const R = c.r * 1.08, H = 0.5, BR = 0.2, hex = regular(6, R, Math.PI / 6), cr = R * 0.07;
+  c.shell = new THREE.Group(); c.shell.position.set(c.pos.x, c.plateY, c.pos.z);
+  c.fillMat = glassMat(c.colorObj);
+  const plate = new THREE.Mesh(slab(hex, cr, H, BR, 4), c.fillMat); plate.renderOrder = -2;
+  const edge = fillet(v2(hex), cr, true, 6).map((p) => { const l = p.length(); return new V3(p.x * (l - BR) / l, H / 2 + 0.01, p.y * (l - BR) / l); });
+  const outline = fatLoop([edge], c.colorObj, 0.6, 1); c.edgeMat = outline.material;
+  c.shell.add(plate, outline); scene.add(c.shell);
+  c.ring = fatLoop(c.rings.filter((g) => g.radius).map((g) => circle(g.radius, 0, 160)), c.colorObj, 0, 1);
+  c.ring.position.set(c.pos.x, c.plateY + H / 2 + 0.02, c.pos.z); c.ringMat = c.ring.material; scene.add(c.ring);
+  const sh = new THREE.Mesh(floorShadowGeo, floorShadowMat); sh.scale.setScalar(R * 2.8); sh.position.set(c.pos.x, floorY, c.pos.z); sh.renderOrder = -3; scene.add(sh);
 }
 
 export function buildDetail(p) {
@@ -414,7 +441,7 @@ export function buildDetail(p) {
 export function recolor() {
   const c = new THREE.Color(), sel = state.selected?.node;
   for (const mesh of Object.values(meshes)) {
-    const arr = mesh.userData.color.array, hot = mesh.material.isMeshPhysicalMaterial ? 4 : 1.7;
+    const arr = mesh.userData.color.array, hot = mesh.material.userData.hot || (mesh.material.isMeshPhysicalMaterial ? 4 : 1.7);
     mesh.userData.list.forEach((e, i) => {
       const n = e.node;
       c.copy(e.color || n.base);
@@ -443,8 +470,12 @@ export function updateLOD(dt) {
     c.open = 1 - smooth(c.r * 3.5, c.r * 5.2, d);
     const dim = state.emph ? (state.emph.has(c.id) || c.parts.some((p) => state.emph.has(p.id)) ? 1 : 0.3) : 1;
     const sd = 1 - 0.92 * (state.focusPart?.struct?.depth || 0);   // everything steps back while a call board is open
-    c.plateAlpha = dim; c.fillMat.opacity = (0.035 + 0.04 * (1 - c.open)) * dim * sd; c.edgeMat.opacity = (0.55 - 0.25 * c.open) * dim * sd;
-    c.ringMat.opacity = (0.06 + 0.22 * c.open) * dim * sd;
+    c.plateAlpha = dim;
+    if (VOXEL) setIslandAlpha(c.shell, dim);   // the call board's step back is uWorld, below
+    else {
+      c.fillMat.opacity = (0.035 + 0.04 * (1 - c.open)) * dim * sd; c.edgeMat.opacity = (0.55 - 0.25 * c.open) * dim * sd;
+      c.ringMat.opacity = (0.06 + 0.22 * c.open) * dim * sd;
+    }
     c.label.want = (1 - smooth(0.25, 0.7, c.open)) * dim * (1 - smooth(state.Rext * 4, state.Rext * 6, d)) * sd;
     c.tag.want = smooth(0.45, 0.85, c.open) * dim * sd;
   }
@@ -509,6 +540,7 @@ export function updateLOD(dt) {
     d.near = 1 - smooth(d.r * 2.6 + 25, d.r * 4 + 60, dd);
     const dim = state.emph ? (d.members.some((e) => state.emph.has(e.id)) ? 1 : 0.3) : 1;
     d.node.alpha = 0.5 * dim;
+    if (d.island) setIslandAlpha(d.island, dim);
     d.label.want = (1 - d.near) * dim * (1 - 0.6 * fpU) * (1 - fpD);
   }
   for (const e of exts.values()) {
@@ -559,6 +591,13 @@ export function updateLOD(dt) {
   }
   updateStructs(dt, fp);
   linkSet.flush(); trackSet.flush();
+  if (VOXEL) {
+    // solid voxels would hide a call board inside the island: the world dissolves as the board comes up,
+    // and the sky dims so the board reads on the dark backdrop it was designed for
+    uWorld.value = 1 - fpD;
+    scene.backgroundIntensity = 1 - 0.9 * fpD;
+    followSun(tgt, camD);
+  }
 }
 
 export function flyTo(target, dist, opts = {}) {
@@ -788,6 +827,7 @@ export function updatePlayer(dt) {
   pv.lerpVectors(player.a, player.b, u);
   pv.y += Math.sin(u * Math.PI) * player.a.distanceTo(player.b) * 0.12;
   pulse.position.copy(pv);
+  if (VOXEL) pulse.lookAt(player.b.x, pv.y, player.b.z);   // the cart faces where it is going
   const buf = trailGeo.attributes.instanceStart.data, arr = buf.array;
   arr[0] = arr[9] = player.a.x; arr[1] = arr[10] = player.a.y; arr[2] = arr[11] = player.a.z; arr[3] = arr[6] = pv.x; arr[4] = arr[7] = pv.y; arr[5] = arr[8] = pv.z;   // the loop's two segments overlap
   buf.needsUpdate = true;
@@ -843,16 +883,20 @@ export function initThreeSetup() {
   renderer.setClearColor(0x000000, 1);
   stage.prepend(renderer.domElement);
   scene = new THREE.Scene();
-  const bg = document.createElement('canvas'); bg.width = 2; bg.height = 256;
-  const bgc = bg.getContext('2d'), gr = bgc.createLinearGradient(0, 0, 0, 256);
-  gr.addColorStop(0, THEME.bgTop); gr.addColorStop(1, THEME.bgBottom); bgc.fillStyle = gr; bgc.fillRect(0, 0, 2, 256);
-  scene.background = new THREE.CanvasTexture(bg); scene.background.colorSpace = THREE.SRGBColorSpace;
+  // vertical gradient background, top colour first
+  const sky = (stops) => {
+    const bg = document.createElement('canvas'); bg.width = 2; bg.height = 256;
+    const bgc = bg.getContext('2d'), gr = bgc.createLinearGradient(0, 0, 0, 256);
+    stops.forEach((c, i) => gr.addColorStop(i / (stops.length - 1), c)); bgc.fillStyle = gr; bgc.fillRect(0, 0, 2, 256);
+    const t = new THREE.CanvasTexture(bg); t.colorSpace = THREE.SRGBColorSpace; return t;
+  };
+  scene.background = sky([THEME.bgTop, THEME.bgBottom]);
   bgColor = new THREE.Color(THEME.bg);
   scene.fog = new THREE.Fog(bgColor, 300, 1500);   // near/far follow the camera distance (updateLOD)
   // soft studio light: a small room environment for reflections, one key light
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture; pmrem.dispose();
-  const key = new THREE.DirectionalLight(0xffffff, 0.7); key.position.set(0.4, 1, 0.55); scene.add(key);
+  if (!VOXEL) { const key = new THREE.DirectionalLight(0xffffff, 0.7); key.position.set(0.4, 1, 0.55); scene.add(key); }
   camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 8000);
   controls = new OrbitControls(camera, stage);
   controls.enableDamping = true;
@@ -872,6 +916,7 @@ export function initThreeSetup() {
   uTime = { value: 0 };
   spinTime = { value: 0 };   // decorative spin; frozen under prefers-reduced-motion
   lineRes = new THREE.Vector2(innerWidth, innerHeight);
+  if (VOXEL) setupVoxel({ renderer, scene, camera, composer, bloom, spinTime, skyTexture: sky });
 }
 
 export function initShaders() {
@@ -1010,6 +1055,7 @@ export function initShaders() {
   });
   shadowMat = shadow(THEME.shadow);
   floorShadowMat = shadow(0.22);   // stronger reads as a black hole on the dark stage
+  floorShadowGeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
   // Glass plates: tinted clearcoat, edges get more opaque at grazing angles (cheap fresnel, no transmission).
   glassMat = (color) => {
     const m = new THREE.MeshPhysicalMaterial({ color, roughness: 0.22, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.06, transparent: true, depthWrite: false, opacity: 0.12, envMapIntensity: 0.6 });
@@ -1164,10 +1210,13 @@ export function initFlowPlayback() {
   MOVE = 1.1;
   STEP = 3.6;
   pulseTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'); const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.25, 'rgba(150,215,250,.85)'); gr.addColorStop(1, 'rgba(90,200,250,0)'); g.fillStyle = gr; g.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c); })();
-  pulse = new THREE.Sprite(new THREE.SpriteMaterial({ map: pulseTex, color: THEME.pulse, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, transparent: true }));
+  if (VOXEL) pulse = voxCart(cart(THEME.accent));   // a small voxel cart; its cargo glows
+  else {
+    pulse = new THREE.Sprite(new THREE.SpriteMaterial({ map: pulseTex, color: THEME.pulse, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, transparent: true }));
+    pulse.material.color.multiplyScalar(2.2);   // above the bloom threshold: the flow pulse glows
+  }
   pulse.visible = false;
   scene.add(pulse);
-  pulse.material.color.multiplyScalar(2.2);   // above the bloom threshold: the flow pulse glows
   trail = fatLoop([[new V3(), new V3()]], new THREE.Color(THEME.trail).multiplyScalar(1.6), 1, 2);   // refilled each frame
   trail.geometry.attributes.instanceStart.data.setUsage(THREE.DynamicDrawUsage);
   trailGeo = trail.geometry;
