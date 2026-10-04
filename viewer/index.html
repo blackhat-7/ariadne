@@ -14,6 +14,7 @@
 <link rel="stylesheet" href="board.css">
 <link rel="stylesheet" href="drawer.css">
 <link rel="stylesheet" href="chat.css">
+<link rel="stylesheet" href="review.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script type="importmap">
 {"imports":{
@@ -31,6 +32,7 @@
   <div id="summary"></div>
   <div id="rev" class="tag"></div>
   <button id="flowsbtn" class="tag"></button>
+  <button id="rvbtn" class="tag" hidden>Review a branch…</button>
   <div id="sysflows" hidden></div>
   <div id="crumbs"></div>
 </div>
@@ -93,6 +95,7 @@
     <button class="icon-btn" id="dback" title="Back (Alt+←)"><span class="sym i-left"></span></button>
     <button class="icon-btn" id="dfwd" title="Forward (Alt+→)"><span class="sym i-right"></span></button>
     <div id="dpath"></div>
+    <div id="dview" class="seg" hidden><button data-v="diff">Diff</button><button data-v="code">Code</button></div>
     <button id="dpart" class="pill" hidden></button>
     <button class="icon-btn" id="dfind" title="Go to file (Ctrl+P)"><span class="sym i-search"></span></button>
     <button class="icon-btn" id="dx" title="Close (Esc)"><span class="sym i-x"></span></button>

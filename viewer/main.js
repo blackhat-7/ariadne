@@ -1,6 +1,6 @@
 // main.js
 // Exports: (none: entry point)
-// Imports: state: state | board: initBoard, loadStructures | chat: initChat, initSettings, loadAgents, probeChat | drawer: closeDrawer, closePop, drawer, gpop, initCodeBrowser, initCodeLink, navHist, openFinder, overlay, probeCodeApi, updateBeacon | hud: buildLegend, buildSearch, drawMini, initBreadcrumb, initDetailPanel, initHoverCard, initLabels, initLegend, initMinimap, initResizablePanels, initSearch, level, openCode, openSearch, setKinds, stepOut, updateCrumbs, updateHover, updateLabels | scene: LOW, build, camPos, camera, clusters, composer, controls, exts, findEnt, fly, flyOverview, flyToEnt, initCameraFlight, initFlowPlayback, initLod, initNavigation, initPicking, initShaders, initState, initThreeSetup, initWorldModel, kindOn, parts, playFlow, player, renderer, select, setEmphasis, setResolution, stopFlow, uTime, updateFly, updateLOD, updatePlayer, updateViewOffset | theme: initVocabulary | util: $, esc, initUtil | voice: initVoice
+// Imports: state: state | board: initBoard, loadStructures | review: initReview | chat: initChat, initSettings, loadAgents, probeChat | drawer: closeDrawer, closePop, drawer, gpop, initCodeBrowser, initCodeLink, navHist, openFinder, overlay, probeCodeApi, updateBeacon | hud: buildLegend, buildSearch, drawMini, initBreadcrumb, initDetailPanel, initHoverCard, initLabels, initLegend, initMinimap, initResizablePanels, initSearch, level, openCode, openSearch, setKinds, stepOut, updateCrumbs, updateHover, updateLabels | scene: LOW, build, camPos, camera, clusters, composer, controls, exts, findEnt, fly, flyOverview, flyToEnt, initCameraFlight, initFlowPlayback, initLod, initNavigation, initPicking, initShaders, initState, initThreeSetup, initWorldModel, kindOn, parts, playFlow, player, renderer, select, setEmphasis, setResolution, stopFlow, uTime, updateFly, updateLOD, updatePlayer, updateViewOffset | theme: initVocabulary | util: $, esc, initUtil | voice: initVoice
 import * as THREE from 'three';
 import { state } from './state.js';
 import { initBoard, loadStructures } from './board.js';
@@ -10,6 +10,7 @@ import { buildLegend, buildSearch, drawMini, initBreadcrumb, initDetailPanel, in
 import { LOW, build, camPos, camera, clusters, composer, controls, exts, findEnt, fly, flyOverview, flyToEnt, initCameraFlight, initFlowPlayback, initLod, initNavigation, initPicking, initShaders, initState, initThreeSetup, initWorldModel, kindOn, parts, playFlow, player, renderer, select, setEmphasis, setResolution, stopFlow, uTime, updateFly, updateLOD, updatePlayer, updateViewOffset } from './scene.js';
 import { initVocabulary } from './theme.js';
 import { initVoice } from './voice.js';
+import { initReview } from './review.js';
 import { $, esc, initUtil } from './util.js';
 
 export let clock;
@@ -189,6 +190,7 @@ initKeyboard();
 initNavigation();
 initLoop();
 await initBoot();
+if (state.M) initReview();   // PR review mode (#review), after the map is built
 
 // Deep link: #act=[{...}, ...] runs those actions after boot, 1.5s apart (shareable views, screenshots).
 try {

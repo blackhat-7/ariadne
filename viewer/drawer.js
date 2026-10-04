@@ -70,18 +70,23 @@ export async function openFile(path, line, fromHist) {
   if (fresh) {
     state.curFile = path;
     dcode.innerHTML = `<div class="sk">${Array.from({ length: 16 }, (_, i) => `<div class="skeleton" style="width:${24 + ((i * 37) % 56)}%"></div>`).join('')}</div>`;
-    let lines = fileCache.get(path);
-    if (!lines) {
-      try { lines = (await getJSON('/api/file?path=' + encodeURIComponent(path))).lines; fileCache.set(path, lines); }
-      catch {
-        const ex = state.M.code?.[`${path}:${line}`];
-        dcode.innerHTML = ex ? `<div class="note">File not readable on the server; showing the stored excerpt.</div><div class="code">${codeHtml(`${path}:${line}`)}</div>` : `<div class="state error"><b>Couldn’t open this file</b>${esc(path)}</div>`;
-        renderTree(p, path); return;
-      }
-    }
+    const diff = await state.diffHtml?.(path);   // review mode: a changed file opens as its diff (review.js)
     if (state.curFile !== path) return;
-    const hl = highlightLines(lines, path);
-    dcode.innerHTML = hl.map((h, i) => `<div class="cl" data-n="${i + 1}"><i>${i + 1}</i><span class="t">${h || ' '}</span></div>`).join('');
+    if (diff) dcode.innerHTML = diff;
+    else {
+      let lines = fileCache.get(path);
+      if (!lines) {
+        try { lines = (await getJSON('/api/file?path=' + encodeURIComponent(path))).lines; fileCache.set(path, lines); }
+        catch {
+          const ex = state.M.code?.[`${path}:${line}`];
+          dcode.innerHTML = ex ? `<div class="note">File not readable on the server; showing the stored excerpt.</div><div class="code">${codeHtml(`${path}:${line}`)}</div>` : `<div class="state error"><b>Couldn’t open this file</b>${esc(path)}</div>`;
+          renderTree(p, path); return;
+        }
+      }
+      if (state.curFile !== path) return;
+      const hl = highlightLines(lines, path);
+      dcode.innerHTML = hl.map((h, i) => `<div class="cl" data-n="${i + 1}"><i>${i + 1}</i><span class="t">${h || ' '}</span></div>`).join('');
+    }
   }
   dcode.querySelector('.cl.on')?.classList.remove('on');
   const el = line && dcode.querySelector(`.cl[data-n="${line}"]`);

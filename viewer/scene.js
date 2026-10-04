@@ -1,5 +1,5 @@
 // scene.js
-// Exports: LOW, setResolution, solidMats, shadowMat, lineRes, spinTime, bgColor, fatLoop, slab, stage, renderer, scene, camera, controls, rt, composer, bloom, uTime, nodeMats, ATLAS, CELL, atlasCv, atlasCtx, atlasCells, LUCIDE, atlasTex, atlasCell, iconMat, lineMat, tubeMat, shellMat, LineSet, curve, parts, clusters, exts, docks, nodes, nodeByKey, meshes, linkSet, trackSet, streams, at, merge, G, SHAPES, AMBER, addNode, shapeOfPart, partScale, build, buildDetail, kindOn, recolor, setEmphasis, dimOf, camPos, updateLOD, fly, fv, flyTo, updateViewOffset, updateFly, flyOverview, flyToEnt, resolveEnt, entFromNode, findEnt, select, labelOf, dive, ray, ndc, pick, entFromEvent, player, MOVE, STEP, pulseTex, pulse, trailGeo, trail, flowById, actorPos, actorKey, playFlow, gotoStep, stopFlow, pv, updatePlayer, isMac, isTrackpad, navPlane, navP, navN, navR, navU, zoomAt, panBy, gestureOpts, initThreeSetup, initShaders, initWorldModel, initState, initLod, initCameraFlight, initPicking, initFlowPlayback, initNavigation
+// Exports: LOW, setResolution, solidMats, shadowMat, lineRes, spinTime, bgColor, fatLoop, slab, stage, renderer, scene, camera, controls, rt, composer, bloom, uTime, nodeMats, ATLAS, CELL, atlasCv, atlasCtx, atlasCells, LUCIDE, atlasTex, atlasCell, iconMat, lineMat, tubeMat, shellMat, LineSet, curve, parts, clusters, exts, docks, nodes, nodeByKey, meshes, linkSet, trackSet, streams, at, merge, G, SHAPES, AMBER, addNode, shapeOfPart, partScale, build, buildDetail, kindOn, recolor, setEmphasis, markReview, dimOf, camPos, updateLOD, fly, fv, flyTo, updateViewOffset, updateFly, flyOverview, flyToEnt, resolveEnt, entFromNode, findEnt, select, labelOf, dive, ray, ndc, pick, entFromEvent, player, MOVE, STEP, pulseTex, pulse, trailGeo, trail, flowById, actorPos, actorKey, playFlow, gotoStep, stopFlow, pv, updatePlayer, isMac, isTrackpad, navPlane, navP, navN, navR, navU, zoomAt, panBy, gestureOpts, initThreeSetup, initShaders, initWorldModel, initState, initLod, initCameraFlight, initPicking, initFlowPlayback, initNavigation
 // Imports: state: state | board: boardNear, flyToBoard, openLens, setFacing, updateStructs | drawer: codeHtml, drawer, openFile | hud: Label, closeDetail, detail, hoverEl, openCode, showDetail | theme: EXT, KINDS, PORTS, QUALITY, THEME, VOXEL, extOf, kindOf | util: $, V3, clamp, ease, esc, hashStr, rng, smooth | voice: cancelSpeech, pauseSpeech, renderVoiceButton, resumeSpeech, speak, stepSpeech, voice | voxel: BOX, CUBE, RING, followSun, refreshShadows, setVoxAlpha, setVoxHot, setupVoxel, uWorld, voxCart, voxIsland, voxMesh, voxNode | voxels: cart, externalModel, partModel
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -462,7 +462,30 @@ export function recolor() {
 }
 
 // A mesh entry's alpha: its node's, gated ("changed" ring, packets on hot externals).
-const alphaOf = (e) => e.node.alpha * (!e.gate ? 1 : e.gate === 'chg' ? (state.showChanges ? 1.2 : 0) : e.node.hot ? 1 : 0);
+const alphaOf = (e) => e.node.alpha * (!e.gate || e.gate === 'rv' ? 1 : e.gate === 'chg' ? (state.showChanges ? 1.2 : 0) : e.node.hot ? 1 : 0);
+
+// Review mode (review.js): a glowing ring under each changed part in its risk colour ({ partId: css colour }), and
+// unchanged parts dim (dimOf). null clears both.
+export function markReview(colors) {
+  for (const k of Object.keys(meshes)) if (k.startsWith('rv:')) { scene.remove(meshes[k]); meshes[k].geometry.dispose(); delete meshes[k]; }
+  state.reviewParts = colors ? new Set(Object.keys(colors)) : null;
+  for (const [id, css] of Object.entries(colors || {})) {
+    const p = parts.get(id); if (!p) continue;
+    const e = { node: p.node, gate: 'rv', color: new THREE.Color(css).multiplyScalar(1.5) };   // above 1: it blooms
+    let mesh;
+    if (VOXEL) { mesh = voxNode(RING, p.r * 1.2, false, e.color, 2.4, p.pos).mesh; Object.assign(mesh.userData, { baked: true, list: [e] }); }
+    else {
+      const geo = G.chg.clone(), al = new THREE.InstancedBufferAttribute(new Float32Array(1), 1);
+      al.setUsage(THREE.DynamicDrawUsage);
+      geo.setAttribute('aColor', new THREE.InstancedBufferAttribute(new Float32Array(3), 3)); geo.setAttribute('aAlpha', al);
+      mesh = new THREE.InstancedMesh(geo, solidMats[0], 1);
+      mesh.setMatrixAt(0, new THREE.Matrix4().compose(new V3(p.pos.x, p.pos.y - p.r * 1.1, p.pos.z), new THREE.Quaternion(), new V3().setScalar(p.r * 2.1)));
+      mesh.frustumCulled = false; mesh.userData = { list: [e], alpha: al, color: geo.attributes.aColor };
+    }
+    meshes['rv:' + id] = mesh; scene.add(mesh);
+  }
+  recolor();
+}
 
 // Set o[k] = v; a change means the view must be drawn again.
 function set(o, k, v) {
@@ -1219,7 +1242,7 @@ export function initState() {
   state.showChanges = false;
   state.activeKeys = new Set();
   state.focusPart = null;
-  dimOf = (id) => (!state.emph || state.emph.has(id) ? 1 : 0.13);
+  dimOf = (id) => (!state.emph || state.emph.has(id) ? 1 : 0.13) * (state.reviewParts && parts.has(id) && !state.reviewParts.has(id) ? 0.3 : 1);
 }
 
 export function initLod() {

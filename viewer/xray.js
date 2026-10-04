@@ -1,14 +1,16 @@
 // xray.js
-// Exports: mountXray
-// Imports: state: state | drawer: dcode, getJSON, openFile | hud: I | scene: exts | theme: EXT, extOf | util: $, clamp, esc
+// Exports: mountXray, focusChange
+// Imports: state: state | drawer: dcode, getJSON, openFile | hud: I | review: diffOps, mergeXray, openChangeLine, reviewFn, xrayRev | scene: exts | theme: EXT, extOf | util: $, clamp, esc
 // Function x-ray (XRAY.md): one function as a top-down structured flowchart inside the Lens. The layout is our own and
 // deterministic, block by block from the syntax tree: seq stacks, if = decision with yes/no columns that rejoin,
 // loop = frame with a back arrow, switch = a row of case columns, try = frame with a catch column, returns/throws = exit pills.
 // Long branches collapse to "…", the chart scrolls inside the Lens, an outline shows where you are, and the code drawer's
-// cursor and the chart's current step follow each other.
+// cursor and the chart's current step follow each other. In review mode a changed function shows head and base merged
+// (review.js): new steps outlined green, removed ones as red ghosts where they were, changed text as old → new.
 import { state } from './state.js';
 import { dcode, getJSON, openFile } from './drawer.js';
 import { I } from './hud.js';
+import { diffOps, mergeXray, openChangeLine, reviewFn, xrayRev } from './review.js';
 import { exts } from './scene.js';
 import { EXT, extOf } from './theme.js';
 import { $, clamp, esc } from './util.js';
@@ -23,7 +25,7 @@ const PILL = new Set(['entry', 'return', 'throw', 'exit']), TERM = new Set(['ret
 const fetched = new Map();   // "file:line" -> Promise<x-ray>
 const labelsOf = new Map();  // "file:start" -> { id: plain-English label }
 let X = null;                // the mounted chart
-let observer = null, resized = null, measureCtx = null;
+let observer = null, resized = null, measureCtx = null, pending = null;   // pending: { fnId, ci } a change to show once mounted
 
 const textW = (s, font) => { measureCtx.font = font; return measureCtx.measureText(s).width; };
 
@@ -38,10 +40,10 @@ function wrapCount(s, font, w) {
   return n;
 }
 
-function load(file, line) {
-  const k = `${file}:${line}`;
+function load(file, line, side = 'head') {
+  const k = `/api/xray?file=${encodeURIComponent(file)}&line=${line}${xrayRev(side)}`;
   if (!fetched.has(k)) {
-    fetched.set(k, getJSON(`/api/xray?file=${encodeURIComponent(file)}&line=${line}`).then((j) => {
+    fetched.set(k, getJSON(k).then((j) => {
       if (j.status !== 'ready' && j.status !== 'unsupported') fetched.delete(k);
       return j;
     }, (e) => {
@@ -58,10 +60,18 @@ function load(file, line) {
 export async function mountXray(el, it, onCall) {
   measureCtx ||= document.createElement('canvas').getContext('2d');
   if (!observer) { observer = new MutationObserver(fromDrawer); observer.observe(dcode, { attributes: true, attributeFilter: ['class'], subtree: true }); }
-  const me = X = { el, it, onCall, data: null, expanded: new Set(), all: false, cur: null, note: '', busy: false };
+  const me = X = { el, it, onCall, data: null, expanded: new Set(), all: false, cur: null, note: '', busy: false, rv: null, only: false };
   el.innerHTML = `<div class="xr-bar"></div><div class="xr-wrap"><div class="xr-view" tabindex="0" aria-label="Function x-ray"><div class="xr-skel">${'<i></i>'.repeat(7)}</div></div></div>`;
   renderBar();
-  const [data] = await Promise.all([load(it.file, it.line), document.fonts.ready]);
+  let [data] = await Promise.all([load(it.file, it.line), document.fonts.ready]);
+  const rv = data.status === 'ready' && reviewFn(it.file, it.line);
+  if (rv) {
+    const [base, ops] = rv.status === 'modified' ? await Promise.all([load(it.file, rv.base.start, 'base'), diffOps(it.file).catch(() => null)]) : [null, null];
+    if (X !== me) return;
+    data = mergeXray(data, base?.status === 'ready' ? base : null, rv, ops);
+    me.rv = rv; me.only = false;
+    if (rv.status === 'modified' && base?.status !== 'ready') me.note = 'The base version could not be x-rayed: changes are marked, removed steps are not shown.';
+  }
   if (X !== me) return;
   me.data = data;
   if (data.status !== 'ready') return renderState();
@@ -70,7 +80,21 @@ export async function mountXray(el, it, onCall) {
   me.paths = tracePaths(data.tree);
   renderBar(); renderChart();
   me.view.focus({ preventScroll: true });
-  fromDrawer();   // the drawer may already sit inside this function
+  if (!(rv && pending?.fnId === rv.id && showChange(pending.ci))) fromDrawer();   // the drawer may already sit inside this function
+}
+
+// Review: show change ci of function fnId in the x-ray (now if it is mounted, else when it is). True when shown now.
+export function focusChange(fnId, ci) {
+  pending = { fnId, ci };
+  return !!(X?.rv?.id === fnId && X.chart?.isConnected && showChange(ci));
+}
+
+function showChange(ci) {
+  const n = X.data.nodes.find((x) => x.changes?.includes(ci)); if (!n) return false;
+  if (X.hidden.has(n.id)) { X.expanded.add(X.hidden.get(n.id)); renderChart(); }
+  setCur(n.id, { scroll: false, sync: false });
+  X.chart.querySelector('.xn.cur')?.scrollIntoView({ block: 'center', inline: 'center' });
+  return true;
 }
 
 // unsupported / error: calm, inline, with a way on.
@@ -92,7 +116,8 @@ function renderBar() {
   const bar = X.el.querySelector('.xr-bar'), d = X.data, ready = d?.status === 'ready';
   const has = ready && labelsOf.has(X.fnKey), n = ready ? d.nodes.length : 0;
   bar.innerHTML = `<button class="btn tinted xr-explain" data-xa="explain" ${ready && !X.busy ? '' : 'disabled'}>${X.busy ? '<span class="spin"></span>Explaining…' : `${I.spark}${has ? 'Explain again' : 'Explain in plain English'}`}</button>
-    ${ready && hasCollapsible(d.tree) ? `<button class="btn" data-xa="all">${X.all ? 'Collapse long branches' : 'Expand all'}</button>` : ''}
+    ${ready && X.rv ? `<button class="btn${X.only ? ' on' : ''}" data-xa="only" aria-pressed="${X.only}" title="Fold steps that did not change">Changes only</button><span class="rv-key"><i class="add"></i>new<i class="del"></i>removed<i class="ch"></i>changed</span>` : ''}
+    ${ready && !X.only && hasCollapsible(d.tree) ? `<button class="btn" data-xa="all">${X.all ? 'Collapse long branches' : 'Expand all'}</button>` : ''}
     <span class="xr-meta">${ready ? `${n} steps · lines ${d.fn.start}–${d.fn.end}${d.fn.lang ? ` · ${esc(d.fn.lang)}` : ''}` : ''}</span>
     <span class="xr-keys"><kbd>↑</kbd><kbd>↓</kbd> step <kbd>↵</kbd> open <kbd>x</kbd> close</span>
     ${X.note ? `<div class="xr-note">${X.note}</div>` : ''}`;
@@ -103,6 +128,10 @@ const blocksOf = (o) => ('if' in o ? [o.then, o.else] : 'loop' in o ? [o.body] :
 const headOf = (o) => (typeof o === 'string' ? o : o.if ?? o.loop ?? o.switch ?? o.try ?? null);
 function countIds(b) { let n = 0; for (const x of b?.seq || []) n += typeof x === 'string' ? 1 : 1 + blocksOf(x).reduce((a, c) => a + countIds(c), 0); return n; }
 function idsIn(b, out = []) { for (const x of b?.seq || []) { const h = headOf(x); if (h) out.push(h); if (typeof x !== 'string') blocksOf(x).forEach((c) => idsIn(c, out)); } return out; }
+const itemIds = (x) => (typeof x === 'string' ? [x] : [headOf(x), ...blocksOf(x).flatMap((c) => idsIn(c))].filter(Boolean));
+const changed = (id) => !!(X.byId[id]?.rv || X.byId[id]?.changes?.length);
+// Changes only: an item with no new, removed or changed step in it (entry and exit always stay)
+const quiet = (x) => X.only && !(typeof x === 'string' && /^(entry|exit)$/.test(X.byId[x]?.kind)) && !itemIds(x).some(changed);
 function hasCollapsible(b) { return (b.seq || []).some((x) => typeof x !== 'string' && blocksOf(x).some((c) => (countIds(c) > COLLAPSE && countIds(c) <= X.data.nodes.length * 0.6) || hasCollapsible(c))); }
 // A block ends the function when its last step returns or throws (or is an if whose both branches do).
 function ends(b) {
@@ -139,7 +168,7 @@ function sizeOf(n) {
   const label = X.labels?.[n.id], small = !!label, cf = small ? F_SMALL : F_CODE, clh = small ? SMALL_LH : CODE_LH;
   const lnW = n.line ? Math.ceil(textW(String(n.line), F_SMALL)) + 8 : 0;
   const icon = ICONED.has(n.kind) && n.kind !== 'effect' ? ICON : 0, tips = n.kind === 'decision' ? 2 * TIP : PILL.has(n.kind) ? 8 : 0;   // pills pad 14px a side
-  const tw = textW(n.text, cf), headW = n.kind === 'effect' ? ICON + textW(n.target || n.callee || 'outside', F_HEAD) : 0;
+  const tw = textW(n.view?.text ?? n.text, cf), headW = n.kind === 'effect' ? ICON + textW(n.target || n.callee || 'outside', F_HEAD) : 0;
   const w = Math.ceil(clamp(Math.max(tw + lnW + icon, headW, label ? textW(label, F_LABEL) : 0) + 2 * PADX + tips + 2, PILL.has(n.kind) ? 56 : MINW, MAXW));
   const inner = w - 2 * PADX - tips;
   const codeLines = Math.min(2, Math.max(1, Math.ceil((tw - 0.5) / (inner - lnW - icon))));
@@ -170,14 +199,26 @@ function branch(b, key) {
   if (!b?.seq?.length) return EMPTY;
   const n = countIds(b);
   // short branches, and a branch that is most of the function (a body wrapped in one try or loop), stay open
-  if (n <= COLLAPSE || n > X.data.nodes.length * 0.6 || X.all || X.expanded.has(key)) return seqBox(b, key);
-  const first = X.byId[headOf(b.seq[0])], text = `${n} steps`, w = Math.ceil(clamp(textW(first?.text || '', F_SMALL) + 2 * PADX + 2, 150, 240));
+  if (X.expanded.has(key) || (X.only ? !b.seq.every(quiet) : n <= COLLAPSE || n > X.data.nodes.length * 0.6 || X.all)) return seqBox(b, key);
+  return moreBox(b, key, n);
+}
+
+// One "… N steps" box standing for a block.
+function moreBox(b, key, n = countIds(b)) {
+  const first = X.byId[headOf(b.seq[0])], text = `${n} step${n === 1 ? '' : 's'}`, w = Math.ceil(clamp(textW(first?.text || '', F_SMALL) + 2 * PADX + 2, 150, 240));
   for (const id of idsIn(b)) X.hidden.set(id, key);
   return { w, h: 44, ax: w / 2, head: null, term: ends(b), draw: (x, y) => { X.out.more.push({ key, x, y, w, h: 44, text, first: first?.text || '', ids: idsIn(b) }); X.order.push('more:' + key); } };
 }
 
 function seqBox(b, key) {
-  const items = b.seq.map((x, i) => lay(x, `${key}.${i}`)).filter(Boolean);
+  let items = [];
+  for (let i = 0; i < b.seq.length; i++) {
+    let j = i;
+    while (j < b.seq.length && quiet(b.seq[j])) j++;
+    if (j - i >= 2 && !X.expanded.has(`${key}~${i}`)) { items.push(moreBox({ seq: b.seq.slice(i, j) }, `${key}~${i}`)); i = j - 1; continue; }
+    items.push(lay(b.seq[i], `${key}.${i}`));
+  }
+  items = items.filter(Boolean);
   if (!items.length) return EMPTY;
   const ax = Math.max(...items.map((i) => i.ax)), right = Math.max(...items.map((i) => i.w - i.ax));
   const h = items.reduce((a, i) => a + i.h, 0) + G * (items.length - 1);
@@ -344,11 +385,14 @@ const effectLook = (n) => {
 function nodeHtml({ n, x, y, w, h, lnW, codeLines, labelLines, label }) {
   const icon = { call: I.fn, loop: I.replay, switch: I.branch, try: I.shield }[n.kind] || '';
   const fx = n.kind === 'effect' ? effectLook(n) : null;
-  const tip = [label, n.text, n.kind === 'call' && n.callee ? `Click: x-ray of ${n.callee}` : '', `line ${n.line}`].filter(Boolean).join('\n');
-  return `<button class="xn k-${esc(n.kind)}${n.error ? ' err' : ''}" data-id="${esc(n.id)}" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px${fx ? `;--k:${fx.color}` : ''}" title="${esc(tip)}">
+  const cs = X.rv ? (n.changes || []).map((ci) => X.rv.changes[ci]).sort((a, b) => /invert/i.test(b.why) - /invert/i.test(a.why) || 'hml'.indexOf(a.severity[0]) - 'hml'.indexOf(b.severity[0])) : [];
+  const inv = cs[0] && /invert/i.test(cs[0].why);
+  const tip = [label, n.old != null ? `was: ${n.old}` : '', n.text, ...cs.map((c) => `• ${c.why}`), n.kind === 'call' && n.callee ? `Click: x-ray of ${n.callee}` : '', n.rv === 'del' ? `removed · base line ${n.baseLine}` : `line ${n.line}`].filter(Boolean).join('\n');
+  return `<button class="xn k-${esc(n.kind)}${n.error ? ' err' : ''}${n.rv ? ' rv-' + n.rv : ''}" data-id="${esc(n.id)}" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px${fx ? `;--k:${fx.color}` : ''}" title="${esc(tip)}">
     ${label ? `<span class="xl" style="-webkit-line-clamp:${labelLines}">${esc(label)}</span>` : ''}
     ${fx ? `<span class="xt">${fx.icon}${esc(n.target || n.callee || 'outside')}</span>` : ''}
-    <span class="xrow${label ? ' small' : ''}">${n.line ? `<i class="ln" style="width:${lnW - 8}px">${n.line}</i>` : ''}${icon}<span class="xc" style="-webkit-line-clamp:${codeLines}">${esc(n.text)}</span></span></button>`;
+    ${cs.length ? `<span class="rv-bdg ${esc(cs[0].severity)}${inv ? ' inv' : ''}">${inv ? '⇄ ' : ''}${esc(cs[0].why)}${cs.length > 1 ? ` <em>+${cs.length - 1}</em>` : ''}</span>` : ''}
+    <span class="xrow${label ? ' small' : ''}">${n.line ? `<i class="ln" style="width:${lnW - 8}px">${n.line}</i>` : ''}${icon}<span class="xc" style="-webkit-line-clamp:${codeLines}">${n.view ? n.view.html : esc(n.text)}</span></span></button>`;
 }
 
 function renderChart() {
@@ -386,7 +430,7 @@ function renderOutline() {
   if (W <= view.clientWidth + 4 && H <= view.clientHeight + 4) return;
   const s = Math.min(96 / W, Math.max(80, view.clientHeight * 0.6) / H), ow = Math.ceil(W * s), oh = Math.ceil(H * s);
   if ((view.clientWidth - W) / 2 < ow + 30) return;   // only in free room beside the chart, never over it
-  const kindCls = (n) => (n.error ? 'err' : n.kind);
+  const kindCls = (n) => (n.rv ? 'rv-' + n.rv : n.error ? 'err' : n.kind);
   wrap.insertAdjacentHTML('beforeend', `<div class="xr-outline" title="Outline: click or drag to move"><svg width="${ow}" height="${oh}">
     ${X.out.frames.map((f) => `<rect class="of" x="${f.x * s}" y="${f.y * s}" width="${f.w * s}" height="${f.h * s}" rx="2"/>`).join('')}
     ${X.out.nodes.map((o) => `<rect class="on ${kindCls(o.n)}" x="${o.x * s}" y="${o.y * s}" width="${Math.max(2, o.w * s)}" height="${Math.max(1.5, o.h * s)}" rx="1"/>`).join('')}
@@ -409,6 +453,7 @@ function wire() {
     const a = e.target.closest('[data-xa]')?.dataset.xa;
     if (a === 'explain') return explain();
     if (a === 'all') { X.all = !X.all; renderBar(); return renderChart(); }
+    if (a === 'only') { X.only = !X.only; X.expanded.clear(); renderBar(); return renderChart(); }
     if (a === 'pick') { $('#settings').hidden = false; $('#model').focus(); return; }
     const m = e.target.closest('[data-more]'); if (m) return expand(m.dataset.more);
     const b = e.target.closest('.xn[data-id]'); if (b) activate(b.dataset.id, true);
@@ -440,7 +485,7 @@ function activate(id, click) {
   const n = X.byId[id]; if (!n) return;
   if (n.kind === 'call' && n.callee && X.onCall(n)) return;
   setCur(id, { scroll: !click, sync: false });
-  openFile(X.data.fn.file, n.line || X.data.fn.start);
+  if (n.rv === 'del') openChangeLine(X.data.fn.file, 0, n.baseLine); else openFile(X.data.fn.file, n.line || X.data.fn.start);
 }
 
 function trace(id) {
@@ -463,7 +508,7 @@ function setCur(id, { scroll, sync }) {
   if (!el) return;
   el.classList.add('cur');
   if (scroll) el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  if (sync && document.getElementById('drawer').classList.contains('open')) openFile(X.data.fn.file, X.byId[id].line || X.data.fn.start);
+  if (sync && document.getElementById('drawer').classList.contains('open')) { const n = X.byId[id]; if (n.rv === 'del') openChangeLine(X.data.fn.file, 0, n.baseLine); else openFile(X.data.fn.file, n.line || X.data.fn.start); }
 }
 
 // The drawer's cursor line moved: light the step on that line (else the closest one above it).
@@ -472,7 +517,7 @@ function fromDrawer() {
   const line = +dcode.querySelector('.cl.on')?.dataset.n || 0, fn = X.data.fn;
   if (line < fn.start || line > fn.end || X.byId[X.cur]?.line === line) return;   // already on that line (several steps can share one)
   let best = null;
-  for (const n of X.data.nodes) if (n.line && n.line <= line && (!best || n.line > best.line || (n.line === best.line && n.kind === 'entry'))) best = n;
+  for (const n of X.data.nodes) if (n.line && n.rv !== 'del' && n.line <= line && (!best || n.line > best.line || (n.line === best.line && n.kind === 'entry'))) best = n;
   if (best && best.id !== X.cur) setCur(best.id, { scroll: true, sync: false });
 }
 
