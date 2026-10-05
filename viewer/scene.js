@@ -517,7 +517,8 @@ export function buildDetail(p) {
       const port = ports.get(s.ref), pt = port && (PORTS[port.type] || PORTS.function); if (port) merged.add(port);
       const free = other === out && s.from && !GENERIC.test(s.from);   // a caller from outside the flow: name it
       const tag = pt ? `<span class="pt" style="--c:${pt.color}">${pt.label}</span>` : free ? `<span class="pt">${esc(s.from)}</span>` : '';
-      node.label = new Label(`<i>${no}</i><b>${esc(short(s.text || name, 40))}</b>${tag}<small>${esc(name)}</small>`, (target ? 'lb-proxy' : 'lb-fn') + (alt ? ' alt' : ''), pos, 44 - 4 * depth,
+      const text = s.text || name, cut = short(text, 40);
+      node.label = new Label(`<i>${no}</i><b${cut !== text ? ` class="cut">${esc(cut)}</b><b class="all">${esc(text)}` : `>${esc(text)}`}</b>${tag}<small>${esc(name)}</small>`, (target ? 'lb-proxy' : 'lb-fn') + (alt ? ' alt' : ''), pos, 44 - 4 * depth,
         { style: `--k:${color}`, dy: 15, ent: { type: target ? 'proxy' : 'fn', key } });
       if (s.ref) node.code = new Label(codeHtml(s.ref, 4), 'lb-code', pos, 22, { mode: 'below', dy: 44, ent: { type: 'code', ref: s.ref } });
       // the call itself, unless the arc already draws it (a call from the bead just before)
@@ -613,6 +614,9 @@ export function setEmphasis(ids, linkFilter) {
   state.emphLinks = new Set(state.M._links.filter(linkFilter || ((L) => state.emph.has(L.a.id) && state.emph.has(L.b.id))));
 }
 
+// Text outside the focus (a selection, a playing flow, a feature) all but disappears; shapes only dim.
+const quiet = (dim) => (dim < 1 ? 0.07 : 1);
+
 export function updateLOD(dt) {
   const tgt = controls.target;
   lineRes.set(innerWidth, innerHeight);
@@ -631,8 +635,8 @@ export function updateLOD(dt) {
       set(c.fillMat, 'opacity', (0.035 + 0.04 * (1 - c.open)) * dim * sd); set(c.edgeMat, 'opacity', (0.55 - 0.25 * c.open) * dim * sd);
       set(c.ringMat, 'opacity', (0.06 + 0.22 * c.open) * dim * sd);
     }
-    c.label.want = (1 - smooth(0.25, 0.7, c.open)) * dim * (1 - smooth(state.Rext * 4, state.Rext * 6, d)) * sd;
-    c.tag.want = smooth(0.45, 0.85, c.open) * dim * sd;
+    c.label.want = (1 - smooth(0.25, 0.7, c.open)) * quiet(dim) * (1 - smooth(state.Rext * 4, state.Rext * 6, d)) * sd;
+    c.tag.want = smooth(0.45, 0.85, c.open) * quiet(dim) * sd;
   }
   // which part is "in focus" (unfolds)
   const selP = state.selected?.type === 'part' ? parts.get(state.selected.id) : null;
@@ -681,11 +685,11 @@ export function updateLOD(dt) {
     const c = p.clusterObj, vis = kindOn[kindOf(p)] ? 1 : 0, dim = dimOf(p.id);
     const crowd = fp && fp !== p ? (1 - 0.65 * fpU) * (1 - 0.85 * fpD) : 1;
     p.node.alpha = (0.6 + 0.4 * c.open) * vis * dim * crowd * (1 - 0.55 * p.unfold) * (p === fp ? 1 - 0.92 * fpD : 1);
-    p.label.want = smooth(0.35, 0.75, c.open) * (1 - smooth(Math.max(110, c.r * 3.4), Math.max(190, c.r * 4.6), p.dist)) * vis * (state.emph ? (state.emph.has(p.id) ? 1 : 0.25) : 1) * (fp && fp !== p ? (1 - 0.75 * fpU) * (1 - fpD) : 1);
+    p.label.want = smooth(0.35, 0.75, c.open) * (1 - smooth(Math.max(110, c.r * 3.4), Math.max(190, c.r * 4.6), p.dist)) * vis * quiet(state.emph && !state.emph.has(p.id) ? 0 : 1) * (fp && fp !== p ? (1 - 0.75 * fpU) * (1 - fpD) : 1);
     p.label.boost = p === fp ? 40 * fpU : (state.selected && state.selected.id === p.id ? 30 : 0);
     if (((player.on && !player.part) || (state.feature && !fp)) && state.emph?.has(p.id)) { p.node.alpha = vis; p.label.want = vis; p.label.boost = state.activeKeys.has(p.id) ? 80 : 20; }
     if (p === hp) { p.label.want = Math.max(p.label.want, vis); p.label.boost = 90; }
-    p.sumLabel.want = (p === hp || p === selPart || (p === fp && fpU > 0.3)) ? p.label.want * (1 - fpD) : 0;
+    p.sumLabel.want = p === hp && p !== selPart ? p.label.want * (1 - fpD) : 0;   // selected: the side panel says it
     p.sumLabel.boost = p.label.boost;
     const tracksPulse = player.part === p || p === selPart || (state.codeLink?.hot && state.codeLink.part === p) ? 1 : 0;
     const u = p.unfold * vis * (1 - 0.97 * (p.struct?.depth || 0));
@@ -708,9 +712,10 @@ export function updateLOD(dt) {
         }
         if (n.step != null) faceOut(n.label, p, cam);
         if (n.code) {
-          // Code shows when you point at the step (or select it), or once you are right next to it.
-          n.code.want = pointed ? lu : lu * (1 - smooth(8, 11, dn));
-          n.code.boost = (pointed ? 80 : Math.max(0, 11 - dn) * 9) + (on ? 40 : 0);
+          // Code shows for the selected step, or once you are right next to it (pointing shows the step's words).
+          const picked = state.selected?.node === n;
+          n.code.want = picked ? lu : lu * (1 - smooth(8, 11, dn));
+          n.code.boost = (picked ? 80 : Math.max(0, 11 - dn) * 9) + (on ? 40 : 0);
         }
       } else { n.label.want = 0; if (n.code) n.code.want = 0; }
     }
@@ -728,14 +733,14 @@ export function updateLOD(dt) {
     const dim = state.emph ? (d.members.some((e) => state.emph.has(e.id)) ? 1 : 0.3) : 1;
     d.node.alpha = 0.5 * dim;
     if (d.island && setVoxAlpha(d.island, dim)) state.redraw = true;
-    d.label.want = (1 - d.near) * dim * (1 - 0.6 * fpU) * (1 - fpD);
+    d.label.want = (1 - d.near) * quiet(dim) * (1 - 0.6 * fpU) * (1 - fpD);
   }
   for (const e of exts.values()) {
     const dim = dimOf(e.id), near = e.dock.near;
     const related = (hp && hp.neighbors.has(e.id)) || (state.emph && state.emph.has(e.id) && (state.selected || player.on || state.feature)) ? 1 : 0;
     const fpRel = fp && fp.neighbors.has(e.id) ? fpU : 0;
     e.node.alpha = Math.max(0.2 + 0.7 * near, related, fpRel * (1 - fpD)) * dim;
-    e.label.want = Math.max(near, related, fpRel * (1 - fpD)) * dim;
+    e.label.want = Math.max(near, related, fpRel * (1 - fpD)) * quiet(dim);
     e.label.boost = state.activeKeys.has(e.id) ? 80 : related ? 30 : 0;
     e.node.hot = !!(state.emph && state.emph.has(e.id) && (state.selected || player.on || state.feature));
   }
@@ -746,7 +751,7 @@ export function updateLOD(dt) {
     const touchFp = fp && (a === fp || b === fp);
     const hot = (hp && (a === hp || b === hp)) || (state.emphLinks && state.emphLinks.has(L));
     if (state.routeLit && !touchFp) al *= 0.15;
-    if (touchFp) al = Math.max(al, 0.2 + 0.45 * fpU); else if (fp) al *= 1 - 0.7 * fpU;
+    if (touchFp) al = Math.max(al, 0.1 + 0.12 * fpU); else if (fp) al *= 1 - 0.85 * fpU;   // inside a part its own steps lead; its links stay faint
     if (hot) al = Math.max(0.7, al);
     al *= vis * (1 - (hot ? 0.8 : 0.9) * fpD);
     // zoomed into one end of a cross-domain link: draw its stub to the rim instead of a line into the distance
@@ -757,13 +762,13 @@ export function updateLOD(dt) {
       linkSet.setAlpha(L.stubA, al * Math.max(0, oa - ob) * (all || state.emph.has(a.id) ? 1 : 0.08), hot ? 1 : 0);
       linkSet.setAlpha(L.stubB, al * Math.max(0, ob - oa) * (all || state.emph.has(b.id) ? 1 : 0.08), hot ? 1 : 0);
     }
-    L.label.want = L.toExt
-      ? (touchFp ? fpU : 0) * vis * (1 - fpD)
-      : (hot ? 1 : 0) * (1 - smooth(90, 160, camPos.distanceTo(L.label.pos))) * vis;
+    // a link's words only for the part you point at: a selection lights links, it doesn't caption them all
+    const pointed = hp && (a === hp || b === hp);
+    L.label.want = pointed ? (L.toExt ? fpU || 1 : 1 - smooth(90, 160, camPos.distanceTo(L.label.pos))) * vis * (1 - fpD) : 0;
   }
   for (const x of state.exits) {
     const o = x.c.open * (1 - x.o.open);
-    x.label.want = smooth(0.5, 0.85, o) * (state.emph && !state.emph.has(x.c.id) && !x.c.parts.some((p) => state.emph.has(p.id)) ? 0.3 : 1) * (1 - 0.6 * fpU) * (1 - fpD);
+    x.label.want = smooth(0.5, 0.85, o) * quiet(state.emph && !state.emph.has(x.c.id) && !x.c.parts.some((p) => state.emph.has(p.id)) ? 0 : 1) * (1 - 0.6 * fpU) * (1 - fpD);
   }
   for (const e of state.entries) {
     const c = e.p.clusterObj, open = smooth(0.3, 0.7, c.open);
@@ -771,8 +776,8 @@ export function updateLOD(dt) {
     if (!e.lead) al *= open;   // afar: only the domain's one marker
     linkSet.setAlpha(e.it, al, e.p === hp ? 1 : 0);
     const far = al > 0.05 ? Math.min(1, al * 1.6) * (1 - smooth(state.Rext * 4, state.Rext * 6, camPos.distanceTo(e.label.pos))) : 0;
-    e.label.want = far * open;
-    if (e.lead) c.entry.want = far * (1 - open);
+    e.label.want = far * open * quiet(dimOf(e.p.id));
+    if (e.lead) c.entry.want = far * (1 - open) * quiet(dimOf(e.p.id));
   }
   // Streams: a hovered or selected domain lifts its own streams and names them; the rest step back.
   const fc = state.hoverEnt?.type === 'cluster' ? clusters.get(state.hoverEnt.id) : hp ? hp.clusterObj : state.selected?.type === 'cluster' ? clusters.get(state.selected.id) : null;

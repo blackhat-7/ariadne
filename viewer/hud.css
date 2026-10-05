@@ -39,6 +39,9 @@ body.show-changes .chg{visibility:visible}
 :is(.lb-fn,.lb-proxy) .pt{grid-column:3;grid-row:1;justify-self:start;padding:2px 5px;font-size:8.5px;--c:var(--ink-5)}
 :is(.lb-fn,.lb-proxy) small{display:none;grid-column:2/4;grid-row:2;font:10.5px var(--mono);color:var(--k)}
 :is(.lb-fn,.lb-proxy).full small{display:block}
+/* a long step: trimmed afar, its whole text when pointed at, playing or up close */
+:is(.lb-fn,.lb-proxy) b.all,:is(.lb-fn,.lb-proxy).full b.cut{display:none}
+:is(.lb-fn,.lb-proxy).full b.all{display:block;max-width:300px;white-space:normal}
 :is(.lb-fn,.lb-proxy).l{grid-template-columns:1fr auto auto;text-align:right}
 :is(.lb-fn,.lb-proxy).l i{grid-column:3}
 :is(.lb-fn,.lb-proxy).l .pt{grid-column:1;justify-self:end}
