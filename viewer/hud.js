@@ -283,7 +283,7 @@ export function showDetail(ent) {
   let h = '';
   if (ent.type === 'part') {
     const p = parts.get(ent.id), k = kindOf(p), ch = state.M.changes?.[p.id];
-    h = head(pill(p.kind, KINDS[k].color) + pill(p.clusterObj.name, p.clusterObj.color, 'soft') + (ch ? pill(`Δ${ch} files`, 'var(--heat)') : ''), p.name, `${esc(p.path || '')}${p.size ? ` · ${p.size} lines` : ''}`) +
+    h = head(pill(p.kind, KINDS[k].color) + pill(p.clusterObj.name, p.clusterObj.color, 'soft') + (ch ? pill(`Δ${ch} files`, 'var(--heat)') : ''), p.name, `${esc(p.path === '.' ? 'repo root' : p.path || '')}${p.size ? ` · ${p.size} lines` : ''}`) +
       `<p class="lead">${esc(p.summary)}</p>${p.details ? `<p class="dim">${esc(p.details)}</p>` : ''}` +
       `<div class="ctl"><button class="btn tinted" data-fpart="${esc(p.id)}" title="Show only what this part touches">${I.focus}Focus</button></div>`;
     if ((p.exposes || []).length) h += sec('Entry points', p.exposes.map((e) => { const t = PORTS[e.type] || PORTS.function; return `<div class="item"><span class="pt" style="--c:${t.color}">${t.label}</span><div class="t"><b>${esc(e.what)}</b>${rf(e.ref)}</div></div>`; }).join(''), p.exposes.length);
