@@ -1,8 +1,9 @@
 # PR review: contract
 
 `ariadne pr [--base REV] [--pr N] [folder]` reviews the current checkout (HEAD plus uncommitted changes) against
-`--base` (default: merge-base with the default branch, `origin/HEAD` → main/master/dev). `--pr N` only fetches the
-title, description and URL with `gh`. It serves the usual viewer with the review loaded (`/#review` opens it).
+`--base` (default: the default branch, `origin/HEAD` → main/master/dev). Like GitHub, the diff starts at the merge-base
+with the base, and a remote base (`origin/…`) is fetched first. `--pr N` fetches the PR's title, description and URL
+with `gh`, and its target branch becomes the base. It serves the usual viewer with the review loaded (`/#review` opens it).
 Everything except the optional narrative is deterministic: syntax trees (`ariadne_xray`) and git, never a model.
 
 ## Review JSON: `GET /api/review`
