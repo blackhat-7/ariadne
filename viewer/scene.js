@@ -1075,12 +1075,15 @@ export function updatePlayer(dt) {
   }
 }
 
+// Trackpad or mouse wheel, decided again as events come in rather than once: a quick first flick on a trackpad
+// looks like a wheel notch, and locking onto "mouse" turns two-finger moves into big jumpy zooms for the session.
 export function isTrackpad(e) {
-  if (state.wheelDevice) return state.wheelDevice === 'trackpad';
-  if (e.deltaMode === 1) { state.wheelDevice = 'mouse'; return false; }
   const ay = Math.abs(e.deltaY);
-  if (e.deltaX !== 0 || (ay < 50 && !(state.lastNotch && ay % state.lastNotch === 0))) { state.wheelDevice = 'trackpad'; return true; }
-  state.lastNotch = ay; state.wheelDevice = 'mouse'; return false;
+  if (e.deltaMode === 1) state.wheelDevice = 'mouse';   // scrolling in lines: a wheel
+  else if (e.deltaX !== 0 || !Number.isInteger(e.deltaY) || (ay && ay < 50 && !(state.lastNotch && ay % state.lastNotch === 0))) state.wheelDevice = 'trackpad';
+  else if (ay >= 50 && ay === state.lastNotch) state.wheelDevice = 'mouse';   // the same big step twice: wheel notches
+  if (ay >= 50) state.lastNotch = ay;
+  return (state.wheelDevice ?? (isMac ? 'trackpad' : 'mouse')) === 'trackpad';
 }
 
 // Zoom about what is under the pointer: a visible node, else the stage floor (where plates and
@@ -1501,7 +1504,7 @@ export function initFlowPlayback() {
 export function initNavigation() {
   /* ---------------- trackpad & touch navigation ----------------
      Mouse wheel (notches) -> OrbitControls zoom. Trackpad pinch (ctrl+wheel, Safari gesture*) -> zoom about the pointer.
-     Trackpad two-finger scroll -> screen-space pan. The device is detected once per session. */
+     Trackpad two-finger scroll -> screen-space pan. The device is re-detected as events come in (isTrackpad). */
   isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
   $('#hint').innerHTML = isMac ? '<b>pinch</b> zoom · <b>two-finger</b> move · <b>drag</b> rotate · <b>Esc</b> back' : '<b>scroll</b> zoom · <b>drag</b> rotate · <b>right-drag</b> move · <b>Esc</b> back';
   state.wheelDevice = null;
