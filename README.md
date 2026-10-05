@@ -6,6 +6,10 @@ Ariadne turns a codebase into a 3D map you can explore: its services, how they t
 
 <sub>The [OpenTelemetry Demo](https://github.com/open-telemetry/opentelemetry-demo), mapped in about a minute. [HD video](docs/demo.mp4)</sub>
 
+## Why
+
+LLMs now write a lot of code and open a lot of pull requests, faster than anyone can read them line by line. Ariadne shows the shape first, in plain language: what the parts are, how they connect, and what a change touches. It doesn't replace reading the code. It tells you which code to read.
+
 ## Install
 
 You need [uv](https://docs.astral.sh/uv/getting-started/installation/) and one coding agent CLI: [Claude Code](https://docs.claude.com/en/docs/claude-code), [pi](https://github.com/earendil-works/pi), [opencode](https://opencode.ai) or [codex](https://github.com/openai/codex).
