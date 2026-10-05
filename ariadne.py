@@ -720,10 +720,10 @@ def assemble(args):
                 print(f"skipping part without id or duplicate: {p.get('id')}", file=sys.stderr)
     part_ids = [p["id"] for p in parts]
 
-    files = repo_files(repo)
+    code = [f for f in repo_files(repo) if SOURCE.search(f) and not TESTS.search(f)]   # sizes count code, not locks or docs
     for p in parts:
         # a file counts for the deepest part holding it: the root part is not the whole repo
-        p["size"] = sum(count_lines(repo / f) for f in files if in_dir(f, p.get("path", "")) and not any(
+        p["size"] = sum(count_lines(repo / f) for f in code if in_dir(f, p.get("path", "")) and not any(
             q is not p and len(q.get("path", "")) > len(p.get("path", "")) and in_dir(f, q.get("path", "")) for q in parts))
 
     # Outside systems are what parts declare they use; other flow actors are their own functions.
