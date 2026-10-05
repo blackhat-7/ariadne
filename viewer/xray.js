@@ -82,6 +82,7 @@ export async function mountXray(el, it, onCall) {
   me.paths = tracePaths(data.tree);
   renderBar(); renderChart();
   me.view.focus({ preventScroll: true });
+  if (!labelsOf.has(me.fnKey)) savedLabels(me);
   if (!(rv && pending?.fnId === rv.id && showChange(pending.ci))) fromDrawer();   // the drawer may already sit inside this function
 }
 
@@ -524,6 +525,15 @@ function fromDrawer() {
 }
 
 /* ---------------- plain-English labels ---------------- */
+// An explanation saved earlier (by any model) shows by itself; looking costs nothing.
+async function savedLabels(me) {
+  const key = me.fnKey, fn = me.data.fn;
+  const { labels } = await postJSON('/api/xray/explain', { file: fn.file, line: fn.start, cached: true }).catch(() => ({}));
+  if (!labels || !Object.keys(labels).length || labelsOf.has(key)) return;
+  labelsOf.set(key, labels);
+  if (X === me && me.chart?.isConnected) { renderBar(); renderChart(); }
+}
+
 async function explain() {
   const cfg = state.chatCfg || {};
   if (!state.agentList?.length) { X.note = 'No chat agent is available on this server, so there is nothing to explain with.'; return renderBar(); }
@@ -536,7 +546,7 @@ async function explain() {
   explaining.add(key); X.note = ''; renderBar();
   let note;
   try {
-    const { labels } = await postJSON('/api/xray/explain', { file: fn.file, line: fn.start, agent: cfg.agent, model: cfg.model });
+    const { labels } = await postJSON('/api/xray/explain', { file: fn.file, line: fn.start, agent: cfg.agent, model: cfg.model, fresh: labelsOf.has(key) });
     labelsOf.set(key, labels);
     const n = Object.keys(labels).length;
     note = n ? `Plain-English labels added to ${n} steps, above their code.` : 'The model gave no labels for this function.';

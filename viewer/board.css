@@ -6,6 +6,13 @@ body.metro-on #left{opacity:0;pointer-events:none;transition:opacity var(--dur) 
 /* ---------- line legend ---------- */
 #boardLegend{left:16px;bottom:16px;width:300px;max-height:calc(100vh - 300px);display:flex;flex-direction:column;padding:10px 6px 8px;border-radius:var(--r-panel);animation:mlIn var(--dur) var(--ease)}
 #boardLegend[hidden]{display:none}
+#boardLegend.min{width:auto;max-width:300px;padding:0;border-radius:var(--r-pill)}
+.ml-pill{display:flex;align-items:baseline;gap:8px;height:36px;padding:0 12px 0 14px;max-width:100%;color:var(--n2)}
+.ml-pill b{font:600 var(--fs-2) var(--sans);color:var(--n1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ml-pill svg,.ml-min svg{align-self:center;width:14px;height:14px;color:var(--n4)}
+.ml-pill:hover svg,.ml-min:hover svg{color:var(--n1)}
+.ml-min{display:grid;place-items:center;align-self:center;width:22px;height:22px;border-radius:50%}
+.ml-min:hover{background:var(--fill-2)}
 @keyframes mlIn{from{opacity:0;scale:.96}}
 .ml-hd{display:flex;align-items:baseline;gap:8px;padding:0 8px 8px}
 .ml-hd b{font:600 var(--fs-2) var(--sans);color:var(--n1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

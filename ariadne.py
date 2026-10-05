@@ -1319,7 +1319,9 @@ class Below:
         return [{"line": L["id"], "label": L["label"]} for L in self.metro[part_id].get("lines", [])
                 if f"{part_id}:{L['id']}" in hits]
 
-    def explain(self, rel, line, agent, model):
+    def explain(self, rel, line, agent, model, cached=False, fresh=False):
+        """Plain-English labels for a function's x-ray steps. Saved per function text (any model's answer is
+        reused); cached: only look, never ask a model; fresh: ask again and replace the saved answer."""
         mod, result = self.module("ariadne_xray"), self.xray(rel, line)
         if result.get("status") != "ready":
             return {"labels": {}, "error": result.get("error", "nothing to explain")}
@@ -1327,10 +1329,11 @@ class Below:
         text = "\n".join(self.source(rel).read_text(errors="replace").splitlines()[fn["start"] - 1:fn["end"]])
         prompt = mod.explain_prompt(result, text)
         # keyed on the prompt itself, so a changed function or an improved prompt gets fresh labels
-        cache = Path.home() / ".cache" / "ariadne" / "labels" / (
-            hashlib.sha1(f"{prompt}\0{agent}\0{model}".encode()).hexdigest() + ".json")
-        if cache.exists():
+        cache = Path.home() / ".cache" / "ariadne" / "labels" / (hashlib.sha1(prompt.encode()).hexdigest() + ".json")
+        if cache.exists() and not fresh:
             return {"labels": json.loads(cache.read_text())}
+        if cached:
+            return {"labels": {}}
         if model and not MODEL_RE.fullmatch(model):
             raise RuntimeError(f"invalid model name: {model}")
         labels = mod.parse_labels(ask_agent(agent, model, "", prompt, self.repo, 300), result)
@@ -1430,6 +1433,8 @@ class Reviews:
             self.head, self.base, self.rev = head or None, base or None, rev
             self.result = self.compute()
         tree, out, _ = self.target(rev)
+        if out.exists():
+            out.touch()   # last use: prune() keeps it a week from here
         if out.exists() and self.view.map_path != out and not self.running():
             self.refresh(None, None, build_map=False)   # this head was mapped before: show that map
         return self.result
@@ -1558,6 +1563,7 @@ class Reviews:
         cache = Path.home() / ".cache" / "ariadne" / "narratives" / (
             hashlib.sha1(f"{prompt}\0{agent}\0{model}".encode()).hexdigest() + ".json")
         if cache.exists():
+            cache.touch()   # last use: prune() keeps it a week from here
             return json.loads(cache.read_text())
         out = extract_json(ask_agent(agent, model, "", prompt, self.root, 600))
         lengths = {}
@@ -1582,12 +1588,31 @@ class Reviews:
 def checkout(root, tree, rev):
     """Check rev out in the cache's worktree (created on first use)."""
     if (tree / ".git").exists() and git(tree, "checkout", "--quiet", "--detach", "--force", rev) is not None:
+        tree.touch()   # last use: prune() keeps it a week from here
         return
     git(root, "worktree", "prune")
     shutil.rmtree(tree, ignore_errors=True)
     tree.parent.mkdir(parents=True, exist_ok=True)
     if git(root, "worktree", "add", "--quiet", "--detach", str(tree), rev) is None:
         raise RuntimeError(f"could not check out {rev[:12]} in {tree}")
+
+
+STALE = 7 * 86400
+
+
+def prune(root):
+    """Delete what reviewing other branches and PRs left behind and nobody used for a week: their maps, review
+    summaries and the worktree they were mapped in (it comes back on demand). The repo's own map, the shared part
+    cache and plain-English labels are kept."""
+    cache, old = part_cache(root), time.time() - STALE
+    for f in [*(cache / "maps").glob("*.map.*"), *(Path.home() / ".cache" / "ariadne" / "narratives").glob("*.json")]:
+        if f.stat().st_mtime < old:
+            shutil.rmtree(f) if f.is_dir() else f.unlink(missing_ok=True)
+    tree = cache / "worktree" / root.name
+    if tree.exists() and tree.stat().st_mtime < old and not any((cache / "maps").glob("*.map.json")):
+        shutil.rmtree(tree, ignore_errors=True)
+        shutil.rmtree(Path.home() / ".cache" / "ariadne" / re.sub(r"\W", "_", str(tree)), ignore_errors=True)
+        git(root, "worktree", "prune")
 
 
 def agent_error(body):
@@ -1614,6 +1639,7 @@ def serve(args):
     agents_ready = threading.Event()
     threading.Thread(target=lambda: (AGENTS.extend(list_agents()), agents_ready.set()), daemon=True).start()
     reviews = Reviews(repo, View(repo, map_path))
+    threading.Thread(target=prune, args=(repo,), daemon=True).start()
     if getattr(args, "review", None) is not None:
         try:
             reviews.select(None, args.review.get("base"), args.review.get("pr"))
@@ -1704,11 +1730,13 @@ def serve(args):
             view = reviews.view
             if self.path in ("/api/xray/explain", "/api/review/narrative"):
                 try:
-                    agents_ready.wait(30)
-                    if error := agent_error(body):
-                        raise RuntimeError(error)
+                    if not body.get("cached"):   # a saved answer needs no agent
+                        agents_ready.wait(30)
+                        if error := agent_error(body):
+                            raise RuntimeError(error)
                     if self.path == "/api/xray/explain":
-                        result = view.below.explain(body["file"], int(body["line"]), body["agent"], body.get("model") or "")
+                        result = view.below.explain(body["file"], int(body["line"]), body.get("agent"), body.get("model") or "",
+                                                    body.get("cached", False), body.get("fresh", False))
                     else:
                         result = reviews.narrative(body["agent"], body.get("model") or "")
                 except (RuntimeError, ValueError, KeyError) as e:

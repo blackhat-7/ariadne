@@ -20,6 +20,8 @@ export let structs;
 const COL = 3.6, ROW = 1.5, GAP = 0.14, MAX_SPURS = 3;
 const LINE_HUES = [250, 75, 150, 25, 300, 195, 350, 110, 225, 50, 275, 170];
 let TXT_W, TXT_H, TXT_FONT, TXT_Q, TXT_CHAR, TXT_DEF, TXT_DIM, textMat, flatMat, zoneMat, WHITE, FILL, tmp, tmpDir;
+let legendOpen = false;   // the Lines box starts folded to a pill (L or a click opens it); the choice is remembered
+try { legendOpen = localStorage.getItem('ariadne.linesOpen') === '1'; } catch { /* storage blocked */ }
 let legendS = null, hoverLines = null, gateLines = null, lens = null, ride = null, ridePulse = null, xrayOn = false;
 
 const trunc = (t, n) => (t.length > n ? t.slice(0, n - 1) + '…' : t);
@@ -476,6 +478,11 @@ function renderLegend(S) {
   legendS = S;
   const el = $('#boardLegend');
   if (!S) { el.innerHTML = ''; return; }
+  el.classList.toggle('min', !legendOpen);
+  if (!legendOpen) {
+    el.innerHTML = `<button class="ml-pill" data-ml="toggle" title="Show the lines (L)"><span class="tag">Lines</span><b>${esc(S.part.name)}</b><span class="ml-cnt">${S.lines.length}</span>${I.chevU}</button>`;
+    return;
+  }
   const rows = S.lines.map((L, i) => {
     const t = PORTS[L.kind] || PORTS.function;
     return `<div class="ml-row${L.on ? '' : ' off'}" data-l="${i}" style="--c:${L.css}">
@@ -484,7 +491,7 @@ function renderLegend(S) {
       <span class="ml-n" title="functions this entry reaches">${L.reach}</span>
       <button class="ml-go" title="Ride this line">${I.play}</button></div>`;
   }).join('');
-  el.innerHTML = `<div class="ml-hd"><span class="tag">Lines</span><b>${esc(S.part.name)}</b><span class="ml-cnt">${S.placed.length} stations</span></div>
+  el.innerHTML = `<div class="ml-hd"><span class="tag">Lines</span><b>${esc(S.part.name)}</b><span class="ml-cnt">${S.placed.length} stations</span><button class="ml-min" data-ml="toggle" title="Hide the lines (L)">${I.chevD}</button></div>
     <div class="ml-list">${rows || '<div class="ml-ft">No entry points found</div>'}</div>
     <div class="ml-ft">${S.hiddenLines ? `+${S.hiddenLines} smaller entry points not drawn · ` : ''}<span title="The Lens: a function's callers and callees as cards around it">click a station for the Lens</span> · <kbd>/</kbd> search any function</div>`;
 }
@@ -735,7 +742,17 @@ export function initBoard() {
   leg.addEventListener('mouseover', (e) => { const L = lineOf(e); hoverLines = L ? [L] : null; });
   leg.addEventListener('mouseleave', () => { hoverLines = null; });
   leg.addEventListener('change', (e) => { const L = lineOf(e); if (L) { L.on = e.target.checked; e.target.closest('.ml-row').classList.toggle('off', !L.on); } });
+  const toggleLegend = () => {
+    legendOpen = !legendOpen;
+    try { localStorage.setItem('ariadne.linesOpen', legendOpen ? '1' : '0'); } catch { /* storage blocked */ }
+    renderLegend(legendS);
+  };
+  addEventListener('keydown', (e) => {
+    if (e.key !== 'l' || leg.hidden || !legendS || e.ctrlKey || e.metaKey || e.altKey || e.target.closest?.('input,textarea,select')) return;
+    e.preventDefault(); toggleLegend();
+  });
   leg.addEventListener('click', (e) => {
+    if (e.target.closest('[data-ml="toggle"]')) return toggleLegend();
     const L = lineOf(e); if (!L) return;
     if (e.target.closest('.ml-go')) startRide(L);
     else if (e.target.closest('.ml-nm')) flyToStation(L.S, L.trunk[0], 16);
