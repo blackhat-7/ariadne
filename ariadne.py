@@ -240,6 +240,29 @@ def extract_json(text):
     return json.loads(text[start:end + 1])
 
 
+def parse_parts(text):
+    """The parts in a mapping reply {"parts": [...]}. When the reply is malformed (an unescaped quote in one
+    part), every other part that parses on its own is kept rather than losing the whole batch."""
+    try:
+        return extract_json(text).get("parts", [])
+    except ValueError as e:
+        error = e
+    decoder, found, i = json.JSONDecoder(), [], text.find("{")
+    while i >= 0:
+        try:
+            obj, end = decoder.raw_decode(text, i)
+        except ValueError:
+            obj, end = None, i + 1
+        if isinstance(obj, dict) and obj.get("id") and obj.get("path"):   # a part, not something inside one
+            found.append(obj)
+        else:
+            end = i + 1
+        i = text.find("{", end)
+    if not found:
+        raise ValueError(f"no parts in reply: {error}")
+    return found
+
+
 # ---------- build ----------
 
 def find_slices(repo, files):
@@ -502,13 +525,16 @@ def build(args):
         out = work / f"parts-{i}.json"
         try:
             if args.agent == "claude":
-                text = run_claude_stream(prompt, repo, ["Read", "Grep", "Glob", "Bash"],
-                                         ["Read", "Grep", "Glob", "Bash(git ls-files:*)"], args.model,
+                # no Bash: denied shell calls (cat, find) still cost a turn each; Glob lists files
+                text = run_claude_stream(prompt, repo, ["Read", "Grep", "Glob"], ["Read", "Grep", "Glob"], args.model,
                                          lambda name: progress.tick(name))
             else:
                 text = ask_agent(args.agent, args.model, "", prompt, repo, timeout=3600)
-            out.write_text(json.dumps(extract_json(text), indent=1))
-            progress.done(", ".join(ids[s] for s in group))
+            found = parse_parts(text)
+            out.write_text(json.dumps({"parts": found}, indent=1))
+            names, paths = {p.get("id") for p in found}, {p.get("path") for p in found}
+            lost = [ids[s] for s in group if ids[s] not in names and s not in paths]
+            progress.done(", ".join(sorted(n for n in names if n)) + (f" (no reply for {', '.join(lost)})" if lost else ""))
             return out
         except (RuntimeError, ValueError) as e:
             progress.done(None, f"batch {i + 1} failed: {e}")
@@ -516,15 +542,28 @@ def build(args):
 
     print(f"Mapping {len(todo)} parts in {len(batches)} parallel batches with {args.agent} · {args.model}.",
           file=sys.stderr)
-    progress = args.progress = Progress(len(batches))   # the server shows it while it refreshes a map
-    with ThreadPoolExecutor(args.jobs) as pool:
-        outs = [p for p in pool.map(map_batch, range(len(batches)), batches) if p]
-    progress.stop()
+    by_path = {s: s for s in todo} | {ids[s]: s for s in todo}
+
+    def run(groups, first):
+        nonlocal progress
+        progress = args.progress = Progress(len(groups))   # the server shows it while it refreshes a map
+        with ThreadPoolExecutor(args.jobs) as pool:
+            done = [p for p in pool.map(map_batch, range(first, first + len(groups)), groups) if p]
+        progress.stop()
+        return done
+
+    progress = None
+    outs = run(batches, 0)
+    # A failed batch (agent error, broken reply) costs only its own parts: those are mapped once more.
+    got = {by_path.get(p.get("path")) or by_path.get(p.get("id")) for o in outs for p in json.loads(o.read_text())["parts"]}
+    missing = [s for s in todo if s not in got]
+    if missing:
+        print(f"Mapping {len(missing)} missing parts again: {', '.join(ids[s] for s in missing)}", file=sys.stderr)
+        outs += run(batch(missing, sizes, min(args.batches, len(missing))), len(batches))
     if not outs and not cached:
         sys.exit("all batches failed")
     # Cache each freshly mapped part under its slice's fingerprint.
     cache.mkdir(parents=True, exist_ok=True)
-    by_path = {s: s for s in todo} | {ids[s]: s for s in todo}
     for out in outs:
         for part in json.loads(Path(out).read_text()).get("parts", []):
             s = by_path.get(part.get("path")) or by_path.get(part.get("id"))
