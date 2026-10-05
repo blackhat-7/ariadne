@@ -19,6 +19,7 @@ export const I = {
   search: ic('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>'),
   chevR: ic('<path d="m9 6 6 6-6 6"/>'),
   chevL: ic('<path d="m15 6-6 6 6 6"/>'),
+  home: ic('<path d="M4 11 12 4l8 7"/><path d="M6 9.5V20h12V9.5"/>'),
   chevD: ic('<path d="m6 9 6 6 6-6"/>'),
   inArrow: ic('<path d="M19 12H5M11 6l-6 6 6 6"/>'),
   outArrow: ic('<path d="M5 12h14M13 6l6 6-6 6"/>'),

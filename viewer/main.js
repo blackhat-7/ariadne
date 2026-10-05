@@ -1,6 +1,6 @@
 // main.js
 // Exports: (none: entry point)
-// Imports: state: state | board: initBoard, loadStructures | feature: escFeature, focusFeature, initFeature, keepFeature | review: initReview | routes: buildRoutes, updateRoutes | nav: initNav | chat: initChat, initSettings, loadAgents, probeChat | drawer: closeDrawer, closePop, drawer, gpop, initCodeBrowser, initCodeLink, openFinder, overlay, probeCodeApi, updateBeacon | hud: buildLegend, buildSearch, drawMini, initBreadcrumb, initDetailPanel, initHoverCard, initLabels, initLegend, initMinimap, initResizablePanels, initSearch, level, openCode, openSearch, setKinds, stepOut, updateCrumbs, updateHover, updateLabels | scene: LOW, build, camPos, camera, clusters, composer, controls, exts, findEnt, fly, flyOverview, flyToEnt, initCameraFlight, initFlowPlayback, initLod, initNavigation, initPicking, initShaders, initState, initThreeSetup, initWorldModel, kindOn, parts, playFlow, player, renderer, select, setEmphasis, setResolution, stopFlow, uTime, updateFly, updateLOD, updatePlayer, updateViewOffset | theme: initVocabulary | util: $, esc, initUtil | voice: initVoice
+// Imports: state: state | board: initBoard, loadStructures | feature: escFeature, focusFeature, initFeature, keepFeature | review: initReview | routes: buildRoutes, updateRoutes | nav: initNav, resetView, restorePlace | chat: initChat, initSettings, loadAgents, probeChat | drawer: closeDrawer, closePop, drawer, gpop, initCodeBrowser, initCodeLink, openFinder, overlay, probeCodeApi, updateBeacon | hud: buildLegend, buildSearch, drawMini, initBreadcrumb, initDetailPanel, initHoverCard, initLabels, initLegend, initMinimap, initResizablePanels, initSearch, level, openCode, openSearch, setKinds, stepOut, updateCrumbs, updateHover, updateLabels | scene: LOW, build, camPos, camera, clusters, composer, controls, exts, findEnt, fly, flyOverview, flyToEnt, initCameraFlight, initFlowPlayback, initLod, initNavigation, initPicking, initShaders, initState, initThreeSetup, initWorldModel, kindOn, parts, playFlow, player, renderer, select, setEmphasis, setResolution, stopFlow, uTime, updateFly, updateLOD, updatePlayer, updateViewOffset | theme: initVocabulary | util: $, esc, initUtil | voice: initVoice
 import * as THREE from 'three';
 import { state } from './state.js';
 import { initBoard, loadStructures } from './board.js';
@@ -13,7 +13,7 @@ import { initVocabulary } from './theme.js';
 import { initVoice } from './voice.js';
 import { initReview } from './review.js';
 import { buildRoutes, updateRoutes } from './routes.js';
-import { initNav } from './nav.js';
+import { initNav, resetView, restorePlace } from './nav.js';
 import { $, esc, initUtil } from './util.js';
 
 export let clock;
@@ -111,6 +111,7 @@ function initKeyboard() {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p' && state.codeApi) { e.preventDefault(); openFinder(); return; }
     if (e.target.closest?.('input,textarea')) return;
     if (e.key === '/') { e.preventDefault(); openSearch(); }
+    else if (e.key === 'h' && !e.ctrlKey && !e.metaKey && !e.altKey) resetView();
     else if (e.key === 'Escape') {
       if (gpop.classList.contains('open')) closePop();
       else if (drawer.classList.contains('open')) closeDrawer();
@@ -148,11 +149,12 @@ async function initBoot() {
     controls.maxDistance = state.overviewDist * 2.5;
     controls.target.set(0, 0, 0);
     camPos.set(0, Math.sin(0.9) * state.overviewDist * 1.4, Math.cos(0.9) * state.overviewDist * 1.4);
-    flyOverview(false); fly.dur = 2.2;
+    state.codeReady = probeCodeApi(); state.codeReady.then(loadStructures);
+    if (!restorePlace()) { flyOverview(false); fly.dur = 2.2; }   // a reopened map comes back where you were
     window.ariadne = { act, map: state.M, play: (id) => playFlow(id), state: () => ({ level: level(), selected: state.selected, flow: player.on ? { id: player.id, step: player.i } : null, camera: { target: controls.target.toArray(), distance: camPos.distanceTo(controls.target) }, board: state.focusPart?.struct ? { part: state.focusPart.id, depth: +state.focusPart.struct.depth.toFixed(2) } : null }) };
     requestAnimationFrame(frame);
     $('#boot').classList.add('gone');
-    probeChat(); loadAgents(); state.codeReady = probeCodeApi(); state.codeReady.then(loadStructures);
+    probeChat(); loadAgents();
   } catch (err) {
     console.error(err);
     $('#boot').innerHTML = `<div class="err">${esc(err.message)}</div>`;

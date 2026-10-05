@@ -28,7 +28,8 @@ export const spoken = (it) => it.name.replace(/([a-z0-9])([A-Z])/g, '$1 $2').rep
 
 export async function loadStructures() {
   if (!state.codeApi) return;
-  for (const p of parts.values()) {
+  // a restored Lens's part first (nav.js), so it opens without waiting for every board
+  for (const p of [...parts.values()].sort((a, b) => (b.id === state.firstStruct) - (a.id === state.firstStruct))) {
     for (let tries = 0; tries < 200; tries++) {
       let j;
       try { j = await getJSON('/api/structure?part=' + encodeURIComponent(p.id)); } catch { return; }   // endpoint missing

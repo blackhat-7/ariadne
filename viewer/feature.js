@@ -1,5 +1,5 @@
 // feature.js
-// Exports: focusFeature, escFeature, keepFeature, initFeature
+// Exports: exitFeature, focusFeature, escFeature, keepFeature, initFeature
 // Imports: state: state | hud: I, openCode | scene: camera, exts, findEnt, flowById, flyTo, flyToEnt, parts, playFlow, player, recolor, resolveEnt, select, setEmphasis, stopFlow | theme: EXT, KINDS, PORTS, extOf, kindOf | util: $, V3, clamp, esc
 import * as THREE from 'three';
 import { state } from './state.js';
@@ -135,7 +135,7 @@ export function focusFeature(spec) {
   return true;
 }
 
-function exitFeature() {
+export function exitFeature() {
   feature = state.feature = null; $('#feature').hidden = true;
   if (!player.on) state.activeKeys = new Set();
   select(state.selected || (saved && resolveEnt(saved)));   // back to the selection's own emphasis, or none
