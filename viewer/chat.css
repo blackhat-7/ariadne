@@ -1,6 +1,6 @@
 /* chat.css: Chat dock (bubbles, composer, typing indicator) and the settings sheet. */
 body.detail-open #chat{right:calc(var(--dw,400px) + 32px)}
-#chat{right:16px;bottom:16px;display:none;transition:right var(--dur) var(--ease),bottom var(--dur) var(--ease)}
+#chat{right:16px;bottom:16px;z-index:14;display:none;transition:right var(--dur) var(--ease),bottom var(--dur) var(--ease)}
 #chat.avail{display:block}
 body:has(#flowbar.open) #chat:not(.open){bottom:112px}
 
