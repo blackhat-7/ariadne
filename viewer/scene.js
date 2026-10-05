@@ -328,7 +328,17 @@ export function build() {
     const from = p.pos.clone().addScaledVector(out, c.r * 1.25 + 8 - new V3().subVectors(p.pos, c.pos).dot(out)); from.y += 2;
     const it = line(new THREE.LineCurve3(from, p.pos.clone()), 1, new THREE.Color(THEME.accent), { entry: p }, STYLE.entry, p.r * 1.3 + 0.4, 1.25);
     const label = new Label(`<svg viewBox="0 0 16 16"><path d="M2 8h10M8.5 4.5 12 8l-3.5 3.5"/></svg>${who}`, 'lb-entry', from, 50, { mode: 'center', ent: { type: 'part', id: p.id } });
-    state.entries.push({ p, it, label });
+    state.entries.push({ p, it, label, who });
+  }
+  // Seen from afar a domain gets one entry marker saying what comes in; its parts' own markers show as it opens.
+  const ORDER = ['users', 'HTTP', 'CLI'], arrow = '<svg viewBox="0 0 16 16"><path d="M2 8h10M8.5 4.5 12 8l-3.5 3.5"/></svg>';
+  for (const c of clusters.values()) {
+    const mine = state.entries.filter((e) => e.p.clusterObj === c).sort((a, b) => ORDER.indexOf(a.who) - ORDER.indexOf(b.who));
+    if (!mine.length) continue;
+    mine[0].lead = true;
+    const n = (w) => mine.filter((e) => e.who === w).length;
+    const what = ORDER.filter(n).map((w) => (n(w) > 1 ? `${w} ×${n(w)}` : w)).join(' · ');
+    c.entry = new Label(arrow + what, 'lb-entry', mine[0].label.pos, 50, { mode: 'center', ent: { type: 'cluster', id: c.id } });
   }
   state.M._links = links;
   linkSet.build(); trackSet.build();
@@ -756,9 +766,13 @@ export function updateLOD(dt) {
     x.label.want = smooth(0.5, 0.85, o) * (state.emph && !state.emph.has(x.c.id) && !x.c.parts.some((p) => state.emph.has(p.id)) ? 0.3 : 1) * (1 - 0.6 * fpU) * (1 - fpD);
   }
   for (const e of state.entries) {
-    const c = e.p.clusterObj, al = (0.35 + 0.35 * c.open) * (kindOn[kindOf(e.p)] ? 1 : 0) * dimOf(e.p.id) * (fp && fp !== e.p ? 1 - 0.8 * fpU : 1) * (1 - fpD);
+    const c = e.p.clusterObj, open = smooth(0.3, 0.7, c.open);
+    let al = (0.35 + 0.35 * c.open) * (kindOn[kindOf(e.p)] ? 1 : 0) * dimOf(e.p.id) * (fp && fp !== e.p ? 1 - 0.8 * fpU : 1) * (1 - fpD);
+    if (!e.lead) al *= open;   // afar: only the domain's one marker
     linkSet.setAlpha(e.it, al, e.p === hp ? 1 : 0);
-    e.label.want = al > 0.05 ? Math.min(1, al * 1.6) * (1 - smooth(state.Rext * 4, state.Rext * 6, camPos.distanceTo(e.label.pos))) : 0;
+    const far = al > 0.05 ? Math.min(1, al * 1.6) * (1 - smooth(state.Rext * 4, state.Rext * 6, camPos.distanceTo(e.label.pos))) : 0;
+    e.label.want = far * open;
+    if (e.lead) c.entry.want = far * (1 - open);
   }
   // Streams: a hovered or selected domain lifts its own streams and names them; the rest step back.
   const fc = state.hoverEnt?.type === 'cluster' ? clusters.get(state.hoverEnt.id) : hp ? hp.clusterObj : state.selected?.type === 'cluster' ? clusters.get(state.selected.id) : null;
