@@ -192,15 +192,17 @@ export function updateBeacon(dt) {
   beacon.position.copy(b.at); beacon.quaternion.copy(camera.quaternion);
   beaconRing.scale.setScalar(b.size);
   b.t += dt;
-  const u = clamp(b.t / 0.9, 0, 1);
-  ripple.visible = u < 1;
-  if (u < 1) state.redraw = true;
-  ripple.scale.setScalar(b.size * (1 + 1.6 * ease(u))); rippleMat.opacity = 0.35 * (1 - u);
+  // Arrival: three ripples and a bright ring, so the eye finds the spot; then the quiet ring stays.
+  const n = Math.floor(b.t / 0.8), u = (b.t % 0.8) / 0.8, on = n < 3;
+  ripple.visible = on;
+  if (b.t < 3) state.redraw = true;
+  beaconMat.opacity = 0.35 + 0.55 * (1 - clamp(b.t / 2.4, 0, 1));
+  if (on) { ripple.scale.setScalar(b.size * (1 + 2 * ease(u))); rippleMat.opacity = 0.6 * (1 - u) * (1 - n / 3); }
 }
 
 export function stepNode(m) {
   if (!m.part) return null;
-  return nodeByKey.get(`${m.part.id}#${m.k}:${m.st.to}`) || nodeByKey.get(`${m.part.id}#${m.k}:${m.st.from}`) || null;
+  return nodeByKey.get(`${m.part.id}#${m.k}.${m.i}`) || null;   // one node per step (scene.js buildDetail)
 }
 
 export function linkCode(path, line, word) {
@@ -240,10 +242,8 @@ export function showCodeLink(force) {
     for (const x of L.matches) {
       if (x.part) {
         ids.add(x.part.id); pts.push(x.part.pos);
-        for (const a of [x.st.from, x.st.to]) {
-          const n = nodeByKey.get(`${x.part.id}#${x.k}:${a}`); if (n) { keys.add(n.key); }
-          if (parts.has(a) || exts.has(a)) ids.add(a);
-        }
+        const n = stepNode(x); if (n) keys.add(n.key);
+        for (const a of [x.st.from, x.st.to]) if (parts.has(a) || exts.has(a)) ids.add(a);
       } else for (const a of [x.st.from, x.st.to]) if (parts.has(a) || exts.has(a)) { ids.add(a); pts.push((parts.get(a) || exts.get(a)).pos); }
     }
     if (L.part) ids.add(L.part.id);
