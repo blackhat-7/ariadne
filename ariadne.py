@@ -1457,7 +1457,9 @@ class Reviews:
         tree, out, rev = self.target(self.rev)
         pl, _, todo, _ = self.update_plan()
         changed, tokens, model = len(todo), source_tokens(todo, pl["owner"], pl["sizes"]), bool(todo) or pl["needs_model"]
-        return {"shown": self.view.map_path == out, "built": out.exists() and not changed,
+        # current: the map shown is this version's and none of the change's parts needs mapping
+        shown = self.view.map_path == out
+        return {"shown": shown, "current": shown and not changed, "built": out.exists() and not changed,
                 "parts_total": len(pl["slices"]), "parts_changed": changed, "needs_model": model,
                 "parts": [pl["ids"][s] for s in todo],
                 "est_tokens": [tokens * 3 // 10, tokens] if changed else [0, 0],

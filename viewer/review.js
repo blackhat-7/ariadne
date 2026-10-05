@@ -465,7 +465,7 @@ async function loadMapStatus() {
   // Show the change on the map by itself: a quick update always, a small one with the model picked in Settings.
   // A large one (a first map of a big repo) waits for a confirmation instead (confirmRemap).
   const cfg = state.chatCfg || {};
-  if (j.shown || R.auto === d.head.rev) return;
+  if (j.current || R.auto === d.head.rev) return;
   if (!j.needs_model || (cfg.picked && j.parts_changed <= AUTO.parts && j.est_tokens[1] <= AUTO.tokens)) { R.auto = d.head.rev; remap(); }
 }
 const AUTO = { parts: 6, tokens: 1_000_000 };
@@ -482,7 +482,7 @@ function mapBanner() {
     return `<div class="rv-banner run"><b>Updating the map for this change: ${esc(p.phase || 'working')}…</b><div class="rv-bar"><i style="width:${pct}%"></i></div><span>${esc((m.parts || []).join(', '))}${esc(who)} · ${t ? `${d}/${t} batches · ` : ''}${fmtSecs(p.elapsed || 0)}</span></div>`;
   }
   if (p?.error || m.error) return `<div class="rv-banner error">${I.info}<div><b>The map update failed.</b><div class="rv-err">${esc(p?.error || m.error)}</div><button class="btn" data-rv="remap">${I.replay}Try again</button></div></div>`;
-  if (m.shown) return '';
+  if (m.current) return '';
   if (m.needs_model && !state.chatCfg?.picked) return `<div class="rv-banner slim">${I.info}<span>Pick a model to show this change on the map</span><button class="btn" data-rv="settings">Settings</button></div>`;
   return `<div class="rv-banner slim" title="${m.parts_changed} of ${m.parts_total} parts differ from this version: their summaries and flows may not match the code.">${I.info}<span>The map is from another version</span>
     <button class="btn" data-rv="remap">${m.needs_model ? 'Update…' : 'Update (quick)'}</button></div>`;
