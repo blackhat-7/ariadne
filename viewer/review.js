@@ -588,6 +588,7 @@ export function initReview() {
   $('#rvbtn').onclick = () => R.on ? hidePanel(false) : openPicker();
   $('#rvbtn').insertAdjacentHTML('afterend', `<button id="rvexit" class="icon-btn" title="Leave review mode" hidden>${I.x}</button>`);
   $('#rvexit').onclick = () => exitReview();
+  hidePanel(false);   // not reviewing yet: shows the "Review a branch…" button
 
   panel.addEventListener('click', (e) => {
     const t = e.target, a = t.closest('[data-rv]')?.dataset.rv;
