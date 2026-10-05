@@ -132,23 +132,23 @@ export async function renderTree(p, path) {
 export function markTree() {
   dtree.querySelector('.rv-files')?.remove();
   dtree.querySelectorAll('.rvc').forEach((e) => e.remove());
-  dtree.querySelectorAll('.ch').forEach((e) => e.classList.remove('ch', 'added', 'deleted', 'modified', 'renamed'));
+  dtree.querySelectorAll('.ch').forEach((e) => e.classList.remove('ch', 'added', 'deleted', 'modified', 'renamed', 'aside'));
   const files = state.reviewFiles;
   if (!files?.length || !dtree.firstElementChild) return;
   const badge = (f) => `<em class="rvc">${f.status[0].toUpperCase()}</em><small class="rvc">+${f.added} −${f.removed}</small>`;
   const by = new Map(files.map((f) => [f.path, f]));
   for (const el of dtree.querySelectorAll('.f[data-file]')) {
     const f = by.get(el.dataset.file);
-    if (f) { el.classList.add('ch', f.status); el.insertAdjacentHTML('beforeend', badge(f)); }
+    if (f) { el.classList.add('ch', f.status); el.classList.toggle('aside', !!(f.generated || f.test)); el.insertAdjacentHTML('beforeend', badge(f)); }
   }
   for (const d of dtree.querySelectorAll('details')) {
-    const n = d.querySelectorAll('.f.ch').length;
+    const n = d.querySelectorAll('.f.ch:not(.aside)').length;   // generated code and tests don't open folders
     if (n) { d.open = true; d.firstElementChild.classList.add('ch'); d.firstElementChild.insertAdjacentHTML('beforeend', `<em class="rvc n">${n}</em>`); }
   }
-  dtree.insertAdjacentHTML('afterbegin', `<details class="rv-files" open><summary class="th tag">Changed files<em class="rvc n">${files.length}</em></summary>${files.map((f) => {
-    const k = f.path.lastIndexOf('/');
-    return `<span class="f ch ${f.status}" data-file="${esc(f.path)}" title="${esc(f.path)}"><span class="sym i-file"></span><span class="nm">${esc(f.path.slice(k + 1))}</span><span class="dir">${esc(f.path.slice(0, k))}</span>${badge(f)}</span>`;
-  }).join('')}</details>`);
+  // the real changes first; generated code and tests after, dimmed
+  const order = [...files].sort((a, b) => (a.generated || a.test) - (b.generated || b.test));
+  dtree.insertAdjacentHTML('afterbegin', `<details class="rv-files" open><summary class="th tag">Changed files<em class="rvc n">${files.length}</em></summary>${order.map((f) =>
+    `<span class="f ch ${f.status}${f.generated || f.test ? ' aside' : ''}" data-file="${esc(f.path)}" title="${esc(`${f.path}  +${f.added} −${f.removed}${f.generated ? ' · generated' : f.test ? ' · test' : ''}`)}"><span class="sym i-file"></span><span class="nm">${esc(f.path.slice(f.path.lastIndexOf('/') + 1))}</span><em class="rvc">${f.status[0].toUpperCase()}</em></span>`).join('')}</details>`);
 }
 
 export function enclosingFn(lines, line) {

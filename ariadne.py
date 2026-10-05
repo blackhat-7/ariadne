@@ -1021,7 +1021,7 @@ def name_match(rows, funcs, i, qualifier, name, words):
 
 
 TESTS = re.compile(r"(^|/)(tests?|__tests__|spec|testdata|fixtures?)/|[._-](test|spec)\.[a-z]+$|(^|/)test_[^/]+\.py$")
-GENERATED = re.compile(r"(\.pb\.(go|cc|h)|_pb2(_grpc)?\.py|_grpc\.pb|_gen\.|\.generated\.|/genproto/|/protos?/|/mocks?/|_mock\.)")
+GENERATED = re.compile(r"(\.pb\.(go|cc|h)|_pb2(_grpc)?\.py|_grpc\.pb|_gen\.|\.generated\.|(^|/)generated/|/genproto/|/protos?/|/mocks?/|_mock\.)")
 
 
 class Structure:

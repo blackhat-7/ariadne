@@ -65,8 +65,8 @@
 #dtree .rv-files{margin-bottom:8px;padding-bottom:6px;border-bottom:.5px solid var(--hairline)}
 #dtree .rv-files>summary{display:flex;align-items:center;gap:6px;padding-left:8px;height:28px;cursor:pointer}
 #dtree .rv-files .f{padding-left:10px}
-#dtree .f .nm{overflow:hidden;text-overflow:ellipsis}
-#dtree .f .dir{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--n5);font-size:11px}
+#dtree .f .nm{min-width:0;overflow:hidden;text-overflow:ellipsis}
+#dtree .f.aside{opacity:.5}
 #dtree .f.ch{--c:var(--rv-medium,#f2b04d)}
 #dtree .f.ch.added{--c:var(--rv-add,#6fd69a)}
 #dtree .f.ch.deleted{--c:var(--rv-del,#ff7b70)}

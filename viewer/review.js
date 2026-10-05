@@ -21,7 +21,7 @@ const CAM_KEY = 'ariadne.reviewCam', FILTER_KEY = 'ariadne.reviewFilters';
 
 // data: the review JSON. head: the selected head as the API names it ("<branch>" | "pr:<N>"), '' = the server's own review.
 // rows: the visible functions in list order; cur: the highlighted one (its id). done: reviewed function ids.
-const R = { data: null, head: '', base: '', rows: [], cur: null, opened: null, on: false, done: new Set(), f: { high: false, hideLow: false, hideTests: true },
+const R = { data: null, head: '', base: '', rows: [], cur: null, opened: null, on: false, done: new Set(), f: { hideLow: false },
   diffs: new Map(), diffOn: true, narr: null, narrBusy: false, narrNote: '', map: null, tour: null, busy: null, error: '', blastSaved: null };
 let panel, tourBar, pick = null;
 
@@ -230,7 +230,7 @@ function setReview(j, head, base = '') {
   if (location.hash !== hash) history.replaceState(history.state, '', hash);   // keeps back/forward's entry (nav.js)
   showPanel(true);
   markReview(Object.fromEntries(j.parts.filter((p) => RISK_COLOR[p.risk]).map((p) => [p.id, RISK_COLOR[p.risk]])));
-  R.cur = null; render();
+  R.cur = null; R.shownCur = undefined; render();
   loadMapStatus();
   state.reviewFiles = j.files; markTree();
   reloadFile();   // a changed file shows as its diff, or as plain code again
@@ -264,12 +264,12 @@ function exitReview() {
 
 /* ---------------- the panel ---------------- */
 function visible() {
-  const fs = R.data.functions.filter((f) => (!R.f.high || f.risk === 'high') && (!R.f.hideLow || RANK[f.risk] > 1));
+  const fs = R.data.functions.filter((f) => !R.f.hideLow || RANK[f.risk] > 1);
   const groups = new Map();
   for (const f of fs) { const k = f.part || ''; if (!groups.has(k)) groups.set(k, { id: k, fns: [], files: [] }); groups.get(k).fns.push(f); }
   const analysed = new Set(R.data.functions.map((f) => f.file));
   for (const file of R.data.files) {
-    if (analysed.has(file.path) || (R.f.hideTests && (file.test || file.generated)) || R.f.high) continue;
+    if (analysed.has(file.path) || file.test || file.generated || R.f.hideLow) continue;   // generated and tests: one line at the end
     const k = file.part || ''; if (!groups.has(k)) groups.set(k, { id: k, fns: [], files: [] }); groups.get(k).files.push(file);
   }
   const top = (g) => Math.max(0, ...g.fns.map((f) => RANK[f.risk]));
@@ -283,12 +283,46 @@ function chips(f) {
   return f.changes.map((c, ci) => `<button class="rv-chip ${esc(c.severity)}${/invert/i.test(c.why) ? ' inv' : ''}" data-ci="${ci}" title="${esc([c.why, c.before && `before: ${c.before}`, c.after && `after: ${c.after}`, c.target && `target: ${c.target}`].filter(Boolean).join('\n'))}">${esc(c.why)}</button>`).join('');
 }
 
+// Long names break at camelCase humps and separators, not mid-word.
+const wrapName = (s) => esc(s).replace(/([._/])/g, '$1<wbr>').replace(/([a-z0-9])([A-Z])/g, '$1<wbr>$2');
+const fileRow = (f) => `<button class="rv-frow" data-file="${esc(f.path)}" title="${esc(f.path)}">${I.file}<span>${esc(short(f.path))}</span>${f.generated ? '<em>generated</em>' : ''}${f.test ? '<em>test</em>' : ''}<small>+${f.added} −${f.removed}</small></button>`;
+
+// A state machine the change's queries implement, as a small left-to-right diagram: states by distance from the start,
+// each arrow is the query that moves a row along (hover: its name, click: its code).
+function lifecycles(list) {
+  return (list || []).map((m) => {
+    const rank = new Map([[m.start ?? m.transitions[0]?.from, 0]]);
+    for (let k = 0; k < m.states.length; k++) for (const t of m.transitions) if (rank.has(t.from) && !rank.has(t.to)) rank.set(t.to, rank.get(t.from) + 1);
+    for (const st of m.states) if (!rank.has(st)) rank.set(st, 0);
+    const cols = [], W = 104, H = 34, X = (r) => 6 + r * W;
+    for (const [st, r] of rank) (cols[r] ||= []).push(st);
+    const rows = Math.max(...cols.map((c) => c.length)), height = rows * H + 8, pos = new Map();
+    cols.forEach((c, r) => c.forEach((st, i) => pos.set(st, [X(r), 4 + (height - c.length * H) / 2 + i * H])));
+    const out = new Set(m.transitions.map((t) => t.from));
+    const tone = (st) => (/fail|error|cancel|reject/i.test(st) ? 'bad' : /succe|done|complete|ok/i.test(st) ? 'good' : st === m.start ? 'start' : '');
+    const edges = m.transitions.filter((t) => pos.has(t.from) && pos.has(t.to)).map((t) => {
+      const [x1, y1] = pos.get(t.from), [x2, y2] = pos.get(t.to), a = x1 + 84, b = x2;
+      return `<path class="rv-le" data-ref="${esc(t.ref)}" d="M${a} ${y1 + 13}C${a + 12} ${y1 + 13} ${b - 12} ${y2 + 13} ${b - 3} ${y2 + 13}" marker-end="url(#rvArrow)"><title>${esc(t.via)}: open its code</title></path>`;
+    }).join('');
+    const nodes = [...pos].map(([st, [x, y]]) => `<g class="rv-ls ${tone(st)}${out.has(st) ? '' : ' end'}"><rect x="${x}" y="${y}" width="84" height="26" rx="13"/><text x="${x + 42}" y="${y + 17}">${esc(st)}</text></g>`).join('');
+    return `<details class="rv-sec" open><summary>Lifecycle <span class="mono">${esc(m.table)}.${esc(m.field)}</span></summary>
+      <svg class="rv-life" viewBox="0 0 ${X(cols.length - 1) + 92} ${height}" width="${X(cols.length - 1) + 92}" height="${height}"><defs><marker id="rvArrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L8 4L0 8z"/></marker></defs>${edges}${nodes}</svg></details>`;
+  }).join('');
+}
+
+// Tables, enums, columns and indexes the change adds or drops (from its migrations).
+function schema(list) {
+  if (!list?.length) return '';
+  return `<details class="rv-sec"${list.length <= 4 ? ' open' : ''}><summary>Data model <em>${list.length}</em></summary>${list.map((x) =>
+    `<button class="rv-schema ${esc(x.op)}" data-ref="${esc(x.ref)}" title="${esc(x.ref)}"><span class="k">${x.op === 'removed' ? '−' : '+'} ${esc(x.kind)}</span><b class="mono">${esc(x.name)}</b>${x.detail.length ? `<small>${esc(x.detail.join(' · '))}</small>` : ''}</button>`).join('')}</details>`;
+}
+
 function rowHtml(f) {
   const on = f.id === R.cur, done = R.done.has(f.id), e = f.blast.entries, callers = f.blast.callers;
   return `<div class="rv-row${on ? ' cur' : ''}${done ? ' done' : ''}" data-id="${esc(f.id)}">
     <label class="rv-ck" title="Reviewed (r)"><input type="checkbox"${done ? ' checked' : ''}><i></i></label>
-    <div class="rv-main"><div class="rv-nmrow">${dot(f.risk)}<button class="rv-nm" title="${esc(f.file)}${f.head ? ':' + f.head.start : ''}">${esc(f.name)}</button>${STATUS[f.status] ? `<span class="rv-st ${esc(f.status)}">${STATUS[f.status]}</span>` : ''}<span class="rv-file">${esc(short(f.file))}</span></div>
-    <div class="rv-chips">${chips(f)}</div>
+    <div class="rv-main"><div class="rv-nmrow">${dot(f.risk)}<button class="rv-nm" title="${esc(f.file)}${f.head ? ':' + f.head.start : ''}">${wrapName(f.name)}</button>${STATUS[f.status] ? `<span class="rv-st ${esc(f.status)}">${STATUS[f.status]}</span>` : ''}</div>
+    ${f.summary ? `<div class="rv-sum">${esc(f.summary)}</div>` : ''}<div class="rv-chips">${chips(f)}</div>
     ${on && (e.length || callers.length) ? `<div class="rv-blast">${e.length ? `<span>${I.entry}${e.map((x) => esc(x.label)).join(', ')}</span>` : ''}${callers.length ? `<span>${I.inArrow}called by ${esc(callers.slice(0, 4).join(', '))}${callers.length > 4 ? ` +${callers.length - 4}` : ''}</span>` : ''}</div>` : ''}</div></div>`;
 }
 
@@ -311,29 +345,31 @@ function render() {
     : `<div class="rv-title">${esc(R.head ? headLabel(R.head) : 'Working copy')}</div>`;
   const revs = `<div class="rv-revs mono"><span title="${esc(d.base.rev)}">${esc(`${d.base.ref} ${d.base.short}`)}</span>${I.outArrow}<span title="${esc(d.head.rev)}">${esc(d.head.short)}${d.head.dirty ? ' + uncommitted' : ''}</span></div>`;
   const stats = `<div class="rv-stats"><span><b>${s.files}</b> files</span><span><b>${fx.added + fx.removed + fx.modified}</b> functions${fx.added || fx.removed ? ` <em>(${[fx.added && `+${fx.added}`, fx.removed && `−${fx.removed}`].filter(Boolean).join(' ')})</em>` : ''}</span>
-    <span class="rv-sev">${['high', 'medium', 'low'].map((k) => `<span class="${k}" title="${k} severity changes">${dot(k)}${s[k] || 0}</span>`).join('')}</span></div>`;
+    <span class="rv-sev">${['high', 'medium', 'low'].map((k) => `<span class="${k}" title="${k} severity changes">${dot(k)}${s[k] || 0}</span>`).join('')}</span>${total ? `<span class="rv-done" title="Reviewed (r marks the current one)">${done}/${total} ✓</span>` : ''}</div>`;
   const gates = d.gates.length ? `<div class="rv-gates">${d.gates.map((g) => `<button class="rv-gate ${esc(g.op)}" data-ref="${esc(g.refs[0] || '')}" title="${esc(`${g.kind} ${g.op}: ${g.refs.join(', ')}`)}">${g.kind === 'flag' ? I.flag : I.env}<span>${g.op === 'added' ? '+' : g.op === 'removed' ? '−' : '~'} ${esc(g.name)}</span></button>`).join('')}</div>` : '';
   const empty = !d.functions.length && !d.files.length;
   const groups = empty ? [] : visible();
   R.rows = groups.flatMap((g) => g.fns);
   if (!R.rows.some((f) => f.id === R.cur)) R.cur = R.rows[0]?.id || null;
+  const aside = d.files.filter((f) => f.generated || f.test);
   const list = empty ? `<div class="rv-state">${I.info}<b>No changes against base</b><span>${esc(d.base.ref)} and this head have the same code.</span></div>`
     : !groups.length ? `<div class="rv-state"><b>Nothing matches these filters</b><button class="btn" data-rv="clearf">Show all</button></div>`
     : groups.map((g) => `<section class="rv-grp"><h4 data-part="${esc(g.id)}">${g.fns.length ? dot(g.fns[0].risk) : ''}<button title="Show on the map">${esc(partName(g.id))}</button><em>${g.fns.length || plural(g.files.length, 'file')}</em></h4>
         ${g.fns.map(rowHtml).join('')}
-        ${g.files.map((f) => `<button class="rv-frow" data-file="${esc(f.path)}" title="${esc(f.path)}">${I.file}<span>${esc(short(f.path))}</span>${f.generated ? '<em>generated</em>' : ''}${f.test ? '<em>test</em>' : ''}<small>+${f.added} −${f.removed}</small></button>`).join('')}</section>`).join('');
+        ${g.files.map(fileRow).join('')}</section>`).join('') +
+      (aside.length ? `<details class="rv-aside"><summary>${plural(aside.length, 'generated or test file')}</summary>${aside.map(fileRow).join('')}</details>` : '');
   const keep = panel.querySelector('.rv-scroll')?.scrollTop || 0;
   panel.innerHTML = `${head}<div class="rv-scroll">
     <div class="rv-pr">${pr}${revs}${stats}${gates}</div>
     ${mapBanner()}
     <div class="rv-acts">${total ? `<button class="btn primary" data-rv="tour">${I.play}Play review tour</button>` : ''}${empty ? '' : `<button class="btn tinted" data-rv="narr" ${R.narrBusy ? 'disabled' : ''}>${R.narrBusy ? '<span class="spin"></span>Summarizing…' : I.spark + (R.narr ? 'Summarize again' : 'Summarize')}</button>`}</div>
     ${R.narrNote ? `<div class="rv-note">${R.narrNote}</div>` : ''}${narrative()}
-    ${total ? `<div class="rv-progress"><div class="rv-bar"><i style="width:${(100 * done) / total}%"></i></div><span><b>${done}/${total}</b> reviewed</span></div>
-    <div class="rv-filters" role="group" aria-label="Filters"><button data-f="high" class="${R.f.high ? 'on' : ''}">High only</button><button data-f="hideLow" class="${R.f.hideLow ? 'on' : ''}">Hide low</button><button data-f="hideTests" class="${R.f.hideTests ? 'on' : ''}">Hide tests/generated</button></div>` : ''}
-    <div class="rv-list">${list}</div></div>
-    <div class="rv-keys">${total ? `<span class="rv-step"><button data-rv="prev" title="Open the previous function (k moves without opening)">${I.chevL}</button><button data-rv="next" title="Open the next function (j moves without opening)">${I.chevR}</button></span>` : '<span><kbd>j</kbd><kbd>k</kbd> move</span>'}<span><kbd>↵</kbd> open</span><span><kbd>]</kbd><kbd>[</kbd> high risk</span><span><kbd>r</kbd> reviewed</span></div>`;
+    ${lifecycles(d.lifecycles)}${schema(d.schema)}
+    <div class="rv-list">${total ? `<div class="rv-lh"><span>Changes</span><button data-f="hideLow" class="${R.f.hideLow ? 'on' : ''}" title="Show only medium and high risk">Hide low risk</button></div>` : ''}${list}</div></div>
+    ${total ? `<div class="rv-keys" title="Keys: j / k move · ↵ open · ] / [ next high risk · r mark reviewed"><span class="rv-step"><button data-rv="prev" title="Previous change">${I.chevL}</button><button data-rv="next" title="Next change">${I.chevR}</button></span><span>${R.rows.findIndex((f) => f.id === R.cur) + 1} of ${R.rows.length}</span></div>` : ''}`;
   panel.querySelector('.rv-scroll').scrollTop = keep;
-  panel.querySelector('.rv-row.cur')?.scrollIntoView({ block: 'nearest' });
+  if (R.shownCur !== undefined && R.shownCur !== R.cur) panel.querySelector('.rv-row.cur')?.scrollIntoView({ block: 'nearest' });   // only when the selection moves
+  R.shownCur = R.cur;
 }
 
 function narrative() {
@@ -440,8 +476,8 @@ function mapBanner() {
   }
   if (p?.error || m.error) return `<div class="rv-banner error">${I.info}<div><b>The map update failed.</b><div class="rv-err">${esc(p?.error || m.error)}</div><button class="btn" data-rv="remap">${I.replay}Try again</button></div></div>`;
   if (m.shown) return '';
-  return `<div class="rv-banner">${I.info}<div><b>Map shows another version:</b> ${m.parts_changed} of ${m.parts_total} parts differ. Their summaries and flows may not match this code.
-    <button class="btn" data-rv="remap">${I.replay}${m.needs_model ? 'Update map…' : 'Update map (quick, no model)'}</button></div></div>`;
+  return `<div class="rv-banner slim" title="${m.parts_changed} of ${m.parts_total} parts differ from this version: their summaries and flows may not match the code.">${I.info}<span>The map is from another version</span>
+    <button class="btn" data-rv="remap">${m.needs_model ? 'Update…' : 'Update (quick)'}</button></div>`;
 }
 
 // Never start anything slow or paid without this confirmation: agent, model, time and token estimate.
@@ -599,7 +635,7 @@ export function initReview() {
     if (a === 'cancel') { R.ctl?.abort(); R.ctl = null; R.busy = null; return render(); }
     if (a === 'retry') return R.head ? selectHead(R.head, R.base) : loadReview();
     if (a === 'dismiss') { R.error = ''; return render(); }
-    if (a === 'clearf') { Object.assign(R.f, { high: false, hideLow: false, hideTests: false }); return render(); }
+    if (a === 'clearf') { R.f.hideLow = false; return render(); }
     if (a === 'tour') return playTour();
     if (a === 'narr') return summarize();
     if (a === 'settings') return openSettings();

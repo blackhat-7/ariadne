@@ -42,6 +42,13 @@ Everything except the optional narrative is deterministic: syntax trees (`ariadn
 }
 ```
 
+SQL (`.sql` files): each sqlc named query (`-- name: X :kind`) is a function with `"kind": "query"` and its comment as
+`"summary"`; its changes say what it reads or writes and its literal guards (`WHERE job_state = 'scheduled'`); a
+removed guard is high. Migrations (other `.sql`, not `*.down.sql`) give `"schema": [{kind: table|enum|index|column,
+op, name, detail: [...], ref}]`. `"lifecycles": [{table, field, states, start, transitions: [{from, to, via, ref}]}]`
+come from `UPDATE … SET col = 'to' … WHERE col = 'from'` on state-like or enum columns; a new row starts at the
+column's default. Generated files (`generated/` folders, "Code generated … DO NOT EDIT" headers) are listed, not reviewed.
+
 Severity rules (deterministic):
 - high: error check removed or condition of an error check changed/inverted; error return/throw removed; condition
   inverted (`==`↔`!=`, `<`↔`>=`, added/removed `!`); effect added/removed on db, queue, storage, payment or other
