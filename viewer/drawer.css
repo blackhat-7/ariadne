@@ -61,6 +61,22 @@
 #dtree summary:hover,#dtree .f:hover{background:var(--fill)}
 #dtree .f.cur{background:color-mix(in srgb,var(--accent) 24%,transparent);color:var(--n1)}
 #dtree .f.cur .i-file{color:var(--accent)}
+/* review mode: changed files and the folders holding them (drawer.js markTree) */
+#dtree .rv-files{margin-bottom:8px;padding-bottom:6px;border-bottom:.5px solid var(--hairline)}
+#dtree .rv-files>summary{display:flex;align-items:center;gap:6px;padding-left:8px;height:28px;cursor:pointer}
+#dtree .rv-files .f{padding-left:10px}
+#dtree .f .nm{overflow:hidden;text-overflow:ellipsis}
+#dtree .f .dir{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--n5);font-size:11px}
+#dtree .f.ch{--c:var(--rv-medium,#f2b04d)}
+#dtree .f.ch.added{--c:var(--rv-add,#6fd69a)}
+#dtree .f.ch.deleted{--c:var(--rv-del,#ff7b70)}
+#dtree .f.ch .nm,#dtree .f.ch:not(:has(.nm)){color:color-mix(in srgb,var(--c) 70%,var(--n1))}
+#dtree .f.ch .i-file{color:var(--c)}
+#dtree .f.ch.deleted .nm{text-decoration:line-through}
+#dtree em.rvc{margin-left:auto;flex:none;min-width:16px;height:16px;padding:0 4px;border-radius:5px;display:grid;place-items:center;font:600 10px var(--mono);font-style:normal;color:var(--c,var(--accent));background:color-mix(in srgb,var(--c,var(--accent)) 16%,transparent)}
+#dtree small.rvc{flex:none;font:10.5px var(--mono);color:var(--n4)}
+#dtree summary.ch{color:var(--n1)}
+#dtree summary.ch .i-folder{color:var(--rv-medium,#f2b04d)}
 
 /* code view */
 #dcode{flex:1;overflow:auto;padding:8px 0 40vh;font:400 12.5px/1.65 var(--mono);color:var(--syn-text);tab-size:4;

@@ -1,5 +1,5 @@
 // drawer.js
-// Exports: refLine, codeHtml, drawer, dcode, dtree, gpop, treeCache, fileCache, getJSON, postJSON, probeCodeApi, LANGS, langOf, highlightLines, partOfPath, openFile, renderTree, DEF_RE, indentOf, enclosingFn, lastSeg, codeMatches, overlay, BEACON_AMBER, ringGeo, beaconMat, rippleMat, beacon, beaconRing, ripple, updateBeacon, stepNode, linkCode, applyCodeLink, showCodeLink, clearCodeLink, renderCtx, reloadFile, closeDrawer, closePop, openFinder, runFinder, renderFinder, closeFinder, initCodeBrowser, initCodeLink
+// Exports: refLine, codeHtml, drawer, dcode, dtree, gpop, treeCache, fileCache, getJSON, postJSON, probeCodeApi, LANGS, langOf, highlightLines, partOfPath, openFile, renderTree, DEF_RE, indentOf, enclosingFn, lastSeg, codeMatches, overlay, BEACON_AMBER, ringGeo, beaconMat, rippleMat, beacon, beaconRing, ripple, updateBeacon, stepNode, linkCode, applyCodeLink, showCodeLink, clearCodeLink, renderCtx, reloadFile, markTree, closeDrawer, closePop, openFinder, runFinder, renderFinder, closeFinder, initCodeBrowser, initCodeLink
 // Imports: state: state | board: structNodeAt | hud: fuzzy, openCode | main: act | nav: remember | scene: camPos, camera, controls, exts, flyTo, nodeByKey, parts, playFlow, player, recolor, resolveEnt, select, setEmphasis | theme: KINDS, THEME, kindOf | util: $, V3, clamp, ease, esc
 import * as THREE from 'three';
 import { state } from './state.js';
@@ -120,9 +120,35 @@ export async function renderTree(p, path) {
         : `<details style="--d:${d}" data-dir="${esc(k)}"><summary style="--d:${d}"><span class="sym i-chev"></span><span class="sym i-folder"></span>${esc(k)}</summary>${build(node[k], d + 1)}</details>`).join('');
     dtree.innerHTML = `<div class="th tag" title="${esc(dir || 'repo')}">${esc(dir.split('/').pop() || 'repo')}</div>` + (files.length ? build(root, 0) : '<div class="state">No files</div>');
   }
-  dtree.querySelector('.f.cur')?.classList.remove('cur');
-  const cur = dtree.querySelector(`.f[data-file="${CSS.escape(path)}"]`);
-  if (cur) { cur.classList.add('cur'); for (let d = cur.parentElement; d && d !== dtree; d = d.parentElement) if (d.tagName === 'DETAILS') d.open = true; cur.scrollIntoView({ block: 'nearest' }); }
+  markTree();
+  dtree.querySelectorAll('.f.cur').forEach((e) => e.classList.remove('cur'));
+  const hits = [...dtree.querySelectorAll(`.f[data-file="${CSS.escape(path)}"]`)], cur = hits.find((e) => !e.closest('.rv-files'));
+  hits.forEach((e) => e.classList.add('cur'));
+  if (cur) { for (let d = cur.parentElement; d && d !== dtree; d = d.parentElement) if (d.tagName === 'DETAILS') d.open = true; cur.scrollIntoView({ block: 'nearest' }); }
+}
+
+// Review mode (review.js sets state.reviewFiles): every changed file listed on top, changed files tinted in the
+// tree with their status and size, and folders holding changes opened with a count.
+export function markTree() {
+  dtree.querySelector('.rv-files')?.remove();
+  dtree.querySelectorAll('.rvc').forEach((e) => e.remove());
+  dtree.querySelectorAll('.ch').forEach((e) => e.classList.remove('ch', 'added', 'deleted', 'modified', 'renamed'));
+  const files = state.reviewFiles;
+  if (!files?.length || !dtree.firstElementChild) return;
+  const badge = (f) => `<em class="rvc">${f.status[0].toUpperCase()}</em><small class="rvc">+${f.added} −${f.removed}</small>`;
+  const by = new Map(files.map((f) => [f.path, f]));
+  for (const el of dtree.querySelectorAll('.f[data-file]')) {
+    const f = by.get(el.dataset.file);
+    if (f) { el.classList.add('ch', f.status); el.insertAdjacentHTML('beforeend', badge(f)); }
+  }
+  for (const d of dtree.querySelectorAll('details')) {
+    const n = d.querySelectorAll('.f.ch').length;
+    if (n) { d.open = true; d.firstElementChild.classList.add('ch'); d.firstElementChild.insertAdjacentHTML('beforeend', `<em class="rvc n">${n}</em>`); }
+  }
+  dtree.insertAdjacentHTML('afterbegin', `<details class="rv-files" open><summary class="th tag">Changed files<em class="rvc n">${files.length}</em></summary>${files.map((f) => {
+    const k = f.path.lastIndexOf('/');
+    return `<span class="f ch ${f.status}" data-file="${esc(f.path)}" title="${esc(f.path)}"><span class="sym i-file"></span><span class="nm">${esc(f.path.slice(k + 1))}</span><span class="dir">${esc(f.path.slice(0, k))}</span>${badge(f)}</span>`;
+  }).join('')}</details>`);
 }
 
 export function enclosingFn(lines, line) {

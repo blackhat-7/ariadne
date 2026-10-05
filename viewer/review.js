@@ -1,12 +1,12 @@
 // review.js
 // Exports: reviewFn, xrayRev, diffOps, mergeXray, openChangeLine, initReview
-// Imports: state: state | board: flyToBoard, openLens, setFacing, setGateLines, spoken | chat: openSettings | drawer: dcode, drawer, getJSON, highlightLines, openFile, postJSON, reloadFile | hud: I, openCode | scene: camPos, controls, fly, flyToEnt, markReview, parts, player, recolor, setEmphasis | util: $, clamp, esc | voice: cancelSpeech, speakFlow, voice | xray: blocksOf, focusChange, headOf, itemIds
+// Imports: state: state | board: flyToBoard, openLens, setFacing, setGateLines, spoken | chat: openSettings | drawer: dcode, drawer, getJSON, highlightLines, markTree, openFile, postJSON, reloadFile | hud: I, openCode | scene: camPos, controls, fly, flyToEnt, markReview, parts, player, recolor, setEmphasis | util: $, clamp, esc | voice: cancelSpeech, speakFlow, voice | xray: blocksOf, focusChange, headOf, itemIds
 // PR review mode (REVIEW.md): the Review panel (PR, stats, narrative, the change list with filters, keys and reviewed
 // state), risk on the map, the merged head/base x-ray data, the code drawer's Diff view, the review tour, the branch/PR
 // picker and the stale-map banner. Everything shown comes from the server's deterministic review JSON.
 import { state } from './state.js';
 import { flyToBoard, openLens, setFacing, setGateLines, spoken } from './board.js';
-import { dcode, drawer, getJSON, highlightLines, openFile, postJSON, reloadFile } from './drawer.js';
+import { dcode, drawer, getJSON, highlightLines, markTree, openFile, postJSON, reloadFile } from './drawer.js';
 import { openSettings } from './chat.js';
 import { I, openCode } from './hud.js';
 import { camPos, controls, fly, flyToEnt, markReview, parts, player, recolor, setEmphasis } from './scene.js';
@@ -232,6 +232,7 @@ function setReview(j, head, base = '') {
   markReview(Object.fromEntries(j.parts.filter((p) => RISK_COLOR[p.risk]).map((p) => [p.id, RISK_COLOR[p.risk]])));
   R.cur = null; render();
   loadMapStatus();
+  state.reviewFiles = j.files; markTree();
   reloadFile();   // a changed file shows as its diff, or as plain code again
 }
 
@@ -257,6 +258,7 @@ function exitReview() {
   R.ctl?.abort();
   showPanel(false);
   history.replaceState(history.state, '', location.pathname + location.search);
+  state.reviewFiles = null; markTree();
   reloadFile();
 }
 
