@@ -461,8 +461,14 @@ async function loadMapStatus() {
   let j; try { j = await getJSON('/api/map/status'); } catch { return; }
   if (R.data !== d) return;
   R.map = j; render();
-  if (j.progress && !j.progress.done) watchMap();
+  if (j.progress && !j.progress.done) return watchMap();
+  // Show the change on the map by itself: a quick update always, a small one with the model picked in Settings.
+  // A large one (a first map of a big repo) waits for a confirmation instead (confirmRemap).
+  const cfg = state.chatCfg || {};
+  if (j.shown || R.auto === d.head.rev) return;
+  if (!j.needs_model || (cfg.picked && j.parts_changed <= AUTO.parts && j.est_tokens[1] <= AUTO.tokens)) { R.auto = d.head.rev; remap(); }
 }
+const AUTO = { parts: 6, tokens: 1_000_000 };
 
 const range = ([lo, hi] = [0, 0], f = String) => (f(lo) === f(hi) ? f(lo) : `${f(lo)}–${f(hi)}`);
 const fmtSecs = (s) => (s < 120 ? `${s} s` : `${Math.round(s / 60)} min`);
@@ -472,10 +478,12 @@ function mapBanner() {
   const m = R.map, p = m?.progress; if (!m) return '';
   if (p && !p.done) {
     const [d, t] = p.batches || [0, 0], pct = t ? Math.max(4, (100 * d) / t) : 4;
-    return `<div class="rv-banner run"><b>Updating the map: ${esc(p.phase || 'working')}…</b><div class="rv-bar"><i style="width:${pct}%"></i></div><span>${t ? `${d}/${t} batches · ` : ''}${p.reads || 0} files read · ${fmtSecs(p.elapsed || 0)}</span></div>`;
+    const cfg = state.chatCfg || {}, who = m.needs_model && cfg.agent ? ` · ${cfg.agent}${cfg.model ? ` · ${cfg.model}` : ''}` : '';
+    return `<div class="rv-banner run"><b>Updating the map for this change: ${esc(p.phase || 'working')}…</b><div class="rv-bar"><i style="width:${pct}%"></i></div><span>${esc((m.parts || []).join(', '))}${esc(who)} · ${t ? `${d}/${t} batches · ` : ''}${fmtSecs(p.elapsed || 0)}</span></div>`;
   }
   if (p?.error || m.error) return `<div class="rv-banner error">${I.info}<div><b>The map update failed.</b><div class="rv-err">${esc(p?.error || m.error)}</div><button class="btn" data-rv="remap">${I.replay}Try again</button></div></div>`;
   if (m.shown) return '';
+  if (m.needs_model && !state.chatCfg?.picked) return `<div class="rv-banner slim">${I.info}<span>Pick a model to show this change on the map</span><button class="btn" data-rv="settings">Settings</button></div>`;
   return `<div class="rv-banner slim" title="${m.parts_changed} of ${m.parts_total} parts differ from this version: their summaries and flows may not match the code.">${I.info}<span>The map is from another version</span>
     <button class="btn" data-rv="remap">${m.needs_model ? 'Update…' : 'Update (quick)'}</button></div>`;
 }
@@ -626,6 +634,7 @@ export function initReview() {
   $('#rvbtn').onclick = () => R.on ? hidePanel(false) : openPicker();
   $('#rvbtn').insertAdjacentHTML('afterend', `<button id="rvexit" class="icon-btn" title="Leave review mode" hidden>${I.x}</button>`);
   $('#rvexit').onclick = () => exitReview();
+  addEventListener('ariadne:model', () => { if (R.on && R.data) loadMapStatus(); });   // a model was just picked: a waiting update can start
   hidePanel(false);   // not reviewing yet: shows the "Review a branch…" button
 
   panel.addEventListener('click', (e) => {

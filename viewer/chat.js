@@ -42,7 +42,7 @@ export function filterModels() {
 
 export function openSettings() { $('#settings').hidden = false; $('#model').focus(); }
 
-export function pickModel(m) { state.chatCfg.model = m.trim(); state.chatCfg.picked = true; $('#model').value = ''; saveCfg(); }
+export function pickModel(m) { state.chatCfg.model = m.trim(); state.chatCfg.picked = true; $('#model').value = ''; saveCfg(); dispatchEvent(new Event('ariadne:model')); }   // review.js may now update its map
 
 export async function probeChat() {
   if (!location.protocol.startsWith('http')) return;

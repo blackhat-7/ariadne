@@ -76,9 +76,10 @@ Built from the review JSON (facts, not raw guesses) plus the changed hunks; refs
   branch or revision, or `"pr:N"` (fetched from origin). One selection per server.
 - `GET /api/map/status` → `{shown, built, parts_total, parts_changed, needs_model, est_tokens: [lo, hi],
   est_seconds: [lo, hi], progress}`: how far the shown map is from the selected head and what a refresh costs.
-- `POST /api/map/refresh {agent?, model?}` maps the selected head in the background (agent and model are required
-  when `needs_model`). A head other than the checkout is checked out in a git worktree in the cache. Parts are
-  cached by the content of their files and shared across branches, so only changed parts are mapped again; the
-  overview is reused while parts connect the same way. A head mapped before is shown again on select, without a model.
+- `POST /api/map/refresh {agent?, model?}` updates the map for the reviewed head in the background: it maps only the
+  parts holding the change's files (and not already cached for that content); every other part is kept from the shown
+  map as it is, so a PR costs its own parts. `GET /api/map/status` lists them in `parts`. The viewer starts a small
+  update by itself (≤ 6 parts, ≤ ~1M tokens) with the model picked in Settings, shows its progress, and asks first
+  for anything larger or when no model is picked.
 - `GET /api/map/progress` → `{phase: "checking out" | "mapping" | "assembling" | "loading" | "done", elapsed, done,
   error, batches: [done, total] | null, reads}`.

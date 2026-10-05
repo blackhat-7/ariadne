@@ -403,14 +403,19 @@ def plan(repo, rev=None, fresh=False):
     cached = {s: json.loads((cache / f"{prints[s]}.json").read_text()) for s in slices
               if not fresh and (cache / f"{prints[s]}.json").exists()}
     todo = [s for s in slices if s not in cached]
-    tokens = sum(sizes.get(f, 0) for s in todo for f in owner.get(s, [])
-                 if SOURCE.search(f) and not TESTS.search(f) and sizes.get(f, 0) < 1_000_000) // 4   # what mapping reads
+    tokens = source_tokens(todo, owner, sizes)
     ids = slice_ids(slices)
     # With every part cached, a model is still needed for the overview unless that is cached too.
     overview = not todo and overview_path(repo, [dict(cached[s], id=cached[s].get("id") or ids[s])
                                                  for s in slices]).exists()
-    return {"files": files, "slices": slices, "owner": owner, "ids": ids, "prints": prints,
+    return {"files": files, "slices": slices, "owner": owner, "ids": ids, "prints": prints, "sizes": sizes,
             "cached": cached, "todo": todo, "tokens": tokens, "needs_model": not overview}
+
+
+def source_tokens(slices, owner, sizes):
+    """Roughly the source mapping reads for these slices: their code, not locks, docs or tests."""
+    return sum(sizes.get(f, 0) for s in slices for f in owner.get(s, [])
+               if SOURCE.search(f) and not TESTS.search(f) and sizes.get(f, 0) < 1_000_000) // 4
 
 
 def overview_path(repo, parts):
@@ -487,6 +492,10 @@ def build(args):
     # Parts whose files are unchanged since they were last mapped (on any branch) are reused as they are.
     pl = plan(repo, fresh=args.fresh)
     slices, owner, ids, prints, cached, todo = (pl[k] for k in ("slices", "owner", "ids", "prints", "cached", "todo"))
+    if args.only is not None:   # a review's update: map the parts it touches, keep the shown map's others as they are
+        cached |= {s: args.reuse[s] for s in slices if s not in cached and s not in args.only and s in args.reuse}
+        todo = [s for s in todo if s in args.only]
+        slices = [s for s in slices if s in cached or s in todo]
     if not slices:
         sys.exit("no source folders found")
     cache = part_cache(repo) / "parts"
@@ -1432,13 +1441,25 @@ class Reviews:
         cache = part_cache(self.root)
         return cache / "worktree" / self.root.name, cache / "maps" / f"{rev[:12]}.map.json", rev   # named like the repo: the map's title
 
+    def update_plan(self):
+        """What updating the map for the reviewed head maps: the parts holding the change's files that aren't
+        cached for this content. The shown map's other parts are kept as they are, so a PR costs its own parts."""
+        tree, out, rev = self.target(self.rev)
+        pl = plan(self.root, rev)
+        files = [f["path"] for f in self.result["files"]] if self.result else pl["files"]
+        only = {max((s for s in pl["slices"] if in_dir(f, s)), key=len, default=None) for f in files} - {None}
+        todo = [s for s in pl["todo"] if s in only]
+        reuse = {p["path"]: {k: v for k, v in p.items() if k not in ("size", "cluster")} for p in self.view.parts.values() if p.get("path")}
+        return pl, only, todo, reuse
+
     def status(self):
         """How far the shown map is from the selected head, and what refreshing it would cost."""
         tree, out, rev = self.target(self.rev)
-        pl = plan(self.root, rev)
-        changed, tokens, model = len(pl["todo"]), pl["tokens"], pl["needs_model"]
+        pl, _, todo, _ = self.update_plan()
+        changed, tokens, model = len(todo), source_tokens(todo, pl["owner"], pl["sizes"]), bool(todo) or pl["needs_model"]
         return {"shown": self.view.map_path == out, "built": out.exists() and not changed,
                 "parts_total": len(pl["slices"]), "parts_changed": changed, "needs_model": model,
+                "parts": [pl["ids"][s] for s in todo],
                 "est_tokens": [tokens * 3 // 10, tokens] if changed else [0, 0],
                 "est_seconds": [60, 240] if changed else [20, 90] if model else [2, 30],
                 "progress": self.progress()}
@@ -1451,9 +1472,10 @@ class Reviews:
         with self.lock:
             if self.running():
                 raise RuntimeError("a map refresh is already running")
+            _, only, _, reuse = self.update_plan()
             args = argparse.Namespace(repo=str(tree), output=str(out), agent=agent or None, model=model or None,
                                       yes=True, fresh=False, batches=None, jobs=None, base=None, no_llm=False,
-                                      progress=None)
+                                      progress=None, only=only, reuse=reuse)
             self.job = job = {"args": args, "start": time.time(), "phase": "preparing", "done": False, "error": None}
         threading.Thread(target=self.run, args=(job, tree, out, rev, build_map), daemon=True).start()
 
@@ -1737,6 +1759,8 @@ def main():
         p.add_argument("--batches", type=int, help="number of batches (default: by repo size, up to 16)")
     a.add_argument("parts", nargs="+")
     a.add_argument("--repo", required=True)
+    for p in (o, b, r):
+        p.set_defaults(only=None, reuse=None)   # set by a review's map update (Reviews.refresh)
     for p in (o, b, a, r):
         p.add_argument("-o", "--output", help="map file (default: ~/.local/share/ariadne/maps/)")
         p.add_argument("--base", help="git revision to count changed files against")
