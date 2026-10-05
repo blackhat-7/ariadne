@@ -1413,8 +1413,12 @@ class Reviews:
         else:
             rev = engine.rev_parse(self.root, head) if head else None
         with self.lock:
-            self.head, self.base, self.rev = head or None, base or None, rev
             self.pr = engine.pr_info(self.root, pr) if pr else None
+            # a pull request is diffed against the branch it targets, fetched fresh, as on GitHub
+            if not base and self.pr and self.pr.get("baseRefName"):
+                base = "origin/" + self.pr["baseRefName"]
+            engine.fetch_base(self.root, base or engine.default_base(self.root))
+            self.head, self.base, self.rev = head or None, base or None, rev
             self.result = self.compute()
         tree, out, _ = self.target(rev)
         if out.exists() and self.view.map_path != out and not self.running():

@@ -7,6 +7,7 @@ import difflib
 import functools
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -75,14 +76,22 @@ def default_base(repo) -> str:
 
 def revs(repo, base, head):
     """(base sha the diff starts from, base ref as given, head sha or None for the working tree).
-    A rev head is compared from its merge-base with base (git diff base...head); the working tree from base."""
+    Like GitHub's pull request diff, the head is compared from its merge-base with base (git diff base...head),
+    so commits that landed on base meanwhile are not counted as changes."""
     ref = base or default_base(repo)
     head_sha = rev_parse(repo, head) if head else None
-    if head_sha is not None or base is None:
-        base_sha = git(repo, "merge-base", ref, head_sha or "HEAD").decode().strip()
-    else:
-        base_sha = rev_parse(repo, ref)
-    return base_sha, ref, head_sha
+    return git(repo, "merge-base", ref, head_sha or "HEAD").decode().strip(), ref, head_sha
+
+
+def fetch_base(repo, ref):
+    """Bring a remote base (origin/main) up to date, as GitHub sees it; offline or without access, keep the local copy."""
+    if not ref.startswith("origin/"):
+        return
+    try:
+        subprocess.run(["git", "fetch", "--no-tags", "--quiet", "origin", ref.removeprefix("origin/")], cwd=repo,
+                       capture_output=True, timeout=30, stdin=subprocess.DEVNULL, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+    except subprocess.TimeoutExpired:
+        pass
 
 
 def changed(repo, base_sha, head_sha):
@@ -242,7 +251,7 @@ def pull_requests(repo):
 def pr_info(repo, n):
     """Title, description and URL of pull request n; only its number when gh can't tell."""
     try:
-        return gh(repo, "pr", "view", str(int(n)), "--json", "number,title,body,url")
+        return gh(repo, "pr", "view", str(int(n)), "--json", "number,title,body,url,baseRefName")
     except RuntimeError:
         return {"number": int(n), "title": "", "body": "", "url": ""}
 
