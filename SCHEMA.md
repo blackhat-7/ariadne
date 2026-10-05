@@ -36,8 +36,9 @@ Mapping agents write ONE JSON file: `{"parts": [ ... ]}`, one entry per folder t
 
 Rules
 - Plain English. Short. A smart person new to the codebase must get it in one read. Each step text at most 12 words.
-- `target`, `from`, `to`: use another part's `id` when talking to an internal part; use product names for outside systems: Postgres, MongoDB, Redis, Kafka, S3, Stripe, Slack, OpenAI, Sentry, etc. Within a flow, function actors are short `Type.Method` or `function` names.
+- `target`, `from`, `to`: use another part's `id` when talking to an internal part; use product names for outside systems: Postgres, MongoDB, Redis, Kafka, S3, Stripe, Slack, OpenAI, Sentry, etc. Within a flow, function actors are short `Type.Method` or `function` names: the real names, never placeholders like `Caller`, `function` or `Logger`. A flow starts at its trigger (`HTTP`, `CLI`, `Cron`, a topic) or its own entry function.
 - `ref` = exact repo-relative `path:line` where that thing happens (the call, the route registration, the handler). Every `ref` is machine-checked: the file must exist, and `fn` (when given) must appear within 5 lines of that line. Never guess a line; open the file and check.
-- Flows follow a real request/call path in order, function by function. Prefer the flows that matter most.
+- Flows follow a real request/call path in order, function by function. Prefer the flows that matter most. When a step calls a function that has its own flow, keep the steps of that flow in it (do not repeat them in the caller's flow): the viewer nests it under that step.
+- `uses`: only what the code really calls; leave out unused or commented-out clients.
 - Do not invent. If unsure, leave it out.
 - Paths are relative to the repository root.

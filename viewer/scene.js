@@ -254,7 +254,7 @@ export function build() {
       c.shell = voxIsland(hashStr(c.id), c.r * 1.08, c.color, c.pos.x, c.pos.z, c.plateY); scene.add(c.shell);
     } else glassPlate(c, floorY);
     const top = new V3(c.pos.x, c.plateY, c.pos.z + c.r * 1.05);
-    c.label = new Label(`<b>${esc(c.name)}</b>${c.summary ? `<span>${esc(c.summary)}</span>` : ''}<i>${c.parts.length} parts</i>`, 'lb-cluster', top, 100, { style: `--c:${c.color}`, ent: { type: 'cluster', id: c.id }, mode: 'below', dy: 6 });
+    c.label = new Label(`<b>${esc(c.name)}</b>${c.summary ? `<span>${esc(c.summary)}</span>` : ''}<i>${c.parts.length} part${c.parts.length === 1 ? '' : 's'}</i>`, 'lb-cluster', top, 100, { style: `--c:${c.color}`, ent: { type: 'cluster', id: c.id }, mode: 'below', dy: 6 });
     const out = new V3(c.pos.x, 0, c.pos.z).normalize(); if (!out.lengthSq()) out.set(0, 0, 1);
     c.tag = new Label(esc(c.name), 'lb-ctag', new V3(c.pos.x + out.x * c.r, c.pos.y - 3, c.pos.z + out.z * c.r), 45, { style: `--c:${c.color}`, mode: 'center', ent: { type: 'cluster', id: c.id } });
   }

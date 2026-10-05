@@ -253,14 +253,30 @@ def find_slices(repo, files):
     projects = {p for p in projects if any(in_dir(f, p) and SOURCE.search(f) for f in files)}
     if projects:
         return sorted(projects)
-    return sorted({Path(f).parts[0] for f in files if len(Path(f).parts) > 1
-                   and not Path(f).parts[0].startswith(".")})
+    code = [f for f in files if SOURCE.search(f) and not TESTS.search(f) and not GENERATED.search(f)
+            and not Path(f).parts[0].startswith(".")]
+    return sorted(code_slices(code, "."))
+
+
+def code_slices(code, folder):
+    """A single project's parts: folder (when it has code files of its own) and its code subfolders. A subfolder
+    holding most of a sizeable codebase (one package) is split the same way; tiny ones stay with their parent."""
+    depth = 0 if folder == "." else len(Path(folder).parts)
+    inside = [Path(f).parts for f in code if in_dir(f, folder)]
+    subs = defaultdict(int)
+    for parts in inside:
+        if len(parts) > depth + 1:
+            subs[str(Path(*parts[:depth + 1]))] += 1
+    subs = {d: n for d, n in subs.items() if n >= 3}
+    out = {folder} if any(len(parts) == depth + 1 for parts in inside) or not subs else set()
+    for d, n in subs.items():
+        out |= code_slices(code, d) if n * 2 > len(inside) and n >= 15 else {d}
+    return out
 
 
 def slice_ids(slices):
-    names = [Path(s).name for s in slices]
-    return {s: (Path(s).name if names.count(Path(s).name) == 1 else s.replace("/", "-"))
-            for s in slices}
+    names = [Path(s).name or "root" for s in slices]
+    return {s: (n if names.count(n) == 1 else s.replace("/", "-")) for s, n in zip(slices, names)}
 
 
 def batch(slices, sizes, n):
@@ -364,7 +380,8 @@ def plan(repo, rev=None, fresh=False):
     cached = {s: json.loads((cache / f"{prints[s]}.json").read_text()) for s in slices
               if not fresh and (cache / f"{prints[s]}.json").exists()}
     todo = [s for s in slices if s not in cached]
-    tokens = sum(sizes.get(f, 0) for s in todo for f in owner.get(s, []) if sizes.get(f, 0) < 1_000_000) // 4
+    tokens = sum(sizes.get(f, 0) for s in todo for f in owner.get(s, [])
+                 if SOURCE.search(f) and not TESTS.search(f) and sizes.get(f, 0) < 1_000_000) // 4   # what mapping reads
     ids = slice_ids(slices)
     # With every part cached, a model is still needed for the overview unless that is cached too.
     overview = not todo and overview_path(repo, [dict(cached[s], id=cached[s].get("id") or ids[s])
@@ -571,9 +588,10 @@ def guess_kind(name):
 
 
 def external_key(name):
-    """'OTel Collector', 'OTLP collector' and 'OpenTelemetry' -> 'opentelemetry'; 'Postgres Replica' stays apart."""
+    """'OTel Collector', 'OTLP collector' and 'OpenTelemetry' -> 'opentelemetry'; 'Pub/Sub' and 'PubSub' -> 'pubsub';
+    'Postgres Replica' stays apart."""
     words = [EXTERNAL_ALIASES.get(w, w) for w in re.findall(r"[a-z0-9]+", name.lower())]
-    return " ".join([w for w in words if w not in EXTERNAL_GENERIC] or words)
+    return "".join([w for w in words if w not in EXTERNAL_GENERIC] or words).replace(" ", "")
 
 
 def merge_externals(parts, flows, kinds, externals):
@@ -702,9 +720,11 @@ def assemble(args):
                 print(f"skipping part without id or duplicate: {p.get('id')}", file=sys.stderr)
     part_ids = [p["id"] for p in parts]
 
-    files = repo_files(repo)
+    code = [f for f in repo_files(repo) if SOURCE.search(f) and not TESTS.search(f)]   # sizes count code, not locks or docs
     for p in parts:
-        p["size"] = sum(count_lines(repo / f) for f in files if in_dir(f, p.get("path", "")))
+        # a file counts for the deepest part holding it: the root part is not the whole repo
+        p["size"] = sum(count_lines(repo / f) for f in code if in_dir(f, p.get("path", "")) and not any(
+            q is not p and len(q.get("path", "")) > len(p.get("path", "")) and in_dir(f, q.get("path", "")) for q in parts))
 
     # Outside systems are what parts declare they use; other flow actors are their own functions.
     externals = {u["target"] for p in parts for u in p.get("uses", []) if u.get("target")} - ids
