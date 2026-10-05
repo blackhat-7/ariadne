@@ -455,18 +455,27 @@ export function buildDetail(p) {
   const flows = p.flows || [], fails = flows.map((f) => FAILS.test(`${f.title} ${f.trigger || ''}`));
   const callee = (s) => !s.to || GENERIC.test(s.to) || s.to === s.from ? s.fn || s.to : s.to;   // a bead's name
   const names = (s) => { const c = callee(s); return parts.has(c) || exts.has(c) ? [c, s.fn] : [c]; };
+  // A flow's driver: the function making most of its calls (at least 2, and half of them).
+  const driverOf = (steps) => {
+    const calls = {};
+    for (const s of steps) if (!GENERIC.test(s.from)) calls[s.from] = (calls[s.from] || 0) + 1;
+    const most = Object.keys(calls).reduce((a, b) => (a === null || calls[b] > calls[a] ? b : a), null);
+    return calls[most] >= 2 && calls[most] * 2 >= steps.length ? most : null;
+  };
+  const drivers = flows.map((f) => driverOf(f.steps || []));
   // Flow b is a sub-flow of step i of flow k when b's trigger names what the step calls, or b starts where the step lands.
+  // Not under a step that only enters k's own driver: what the driver itself calls belongs beside k, not inside one step.
   const parent = flows.map(() => null), under = (a, b) => { for (let x = a; x != null; x = parent[x]?.k) if (x === b) return true; return false; };
   flows.forEach((B, b) => {
     if (fails[b]) return;
     const words = new Set(String(B.trigger || '').split(/[^\w.]+/)), first = B.steps?.[0]?.from;
     for (const hit of [(n) => words.has(n), (n) => n === first && !GENERIC.test(first)])
       for (let k = 0; k < flows.length && !parent[b]; k++) if (k !== b && !under(k, b))
-        (flows[k].steps || []).forEach((s, i) => { if (!parent[b] && names(s).some((n) => n && hit(n))) parent[b] = { k, i }; });
+        (flows[k].steps || []).forEach((s, i) => { if (!parent[b] && !names(s).includes(drivers[k]) && names(s).some((n) => n && hit(n))) parent[b] = { k, i }; });
   });
   const top = flows.map((_, k) => k).filter((k) => !parent[k]).sort((a, b) => fails[a] - fails[b]);
   const slots = top.reduce((n, k) => n + (flows[k].steps || []).length + 2, 0);   // a flow: its title chip, its steps, a gap
-  const rr = Math.max(p.r + 5.5, (slots * 2.6) / (Math.PI * 2)), y = p.pos.y + 1.5, DEPTH = 5.5;
+  const rr = Math.max(p.r + 5.5, (slots * 3.2) / (Math.PI * 2)), y = p.pos.y + 1.5, DEPTH = 5.5;
   p.detailNodes = []; p.detailLabels = []; p.flowInfo = [];
   const at = (th, r) => new V3(p.pos.x + Math.cos(th) * r, y, p.pos.z + Math.sin(th) * r);
   const arc = (t0, t1, r) => Array.from({ length: 7 }, (_, i) => at(t0 + ((t1 - t0) * i) / 6, r));
@@ -476,13 +485,11 @@ export function buildDetail(p) {
   let far = rr;
   // Lay flow k out from angle th0 in steps of dth at radius r. hub: the parent bead (sub-flow) or null (ring: the part).
   const lay = (k, th0, dth, r, hub, num, depth) => {
-    const f = flows[k], steps = f.steps || [], calls = {}, alt = fails[k];
-    for (const s of steps) if (!GENERIC.test(s.from)) calls[s.from] = (calls[s.from] || 0) + 1;
-    const most = Object.keys(calls).reduce((a, b) => (calls[b] > calls[a] ? b : a), null);
-    const driver = calls[most] >= 2 && calls[most] * 2 >= steps.length ? most : null;
+    const f = flows[k], steps = f.steps || [], alt = fails[k], driver = drivers[k];
     const home = new Set([driver, ...(hub ? hub.names : [])]);   // callers that are the hub itself
     far = Math.max(far, r);
-    const title = new Label(`<i>${num || '▶'}</i>${esc(f.title)}`, 'lb-flow' + (alt ? ' alt' : '') + (hub ? ' sub' : ''), at(th0, r), 48 - 6 * depth, { dy: 10, ent: { type: 'flow', id: `${p.id}#${k}` } });
+    // steps outrank flow titles when they collide: the numbers (A5.1) already carry the hierarchy
+    const title = new Label(`<i>${num || '▶'}</i>${esc(f.title)}`, 'lb-flow' + (alt ? ' alt' : '') + (hub ? ' sub' : ''), at(th0, r), 40 - 6 * depth, { dy: 10, ent: { type: 'flow', id: `${p.id}#${k}` } });
     const fi = { steps: [], spine: [], title, alt }, beads = [], last = new Map();
     p.flowInfo[k] = fi; p.detailLabels.push(title);
     if (hub) fi.spine.push(trackSet.add([hub.pos, at(th0, r)], track, p));   // the sub-flow hangs off its parent bead
@@ -500,7 +507,7 @@ export function buildDetail(p) {
       const port = ports.get(s.ref), pt = port && (PORTS[port.type] || PORTS.function); if (port) merged.add(port);
       const free = other === out && s.from && !GENERIC.test(s.from);   // a caller from outside the flow: name it
       const tag = pt ? `<span class="pt" style="--c:${pt.color}">${pt.label}</span>` : free ? `<span class="pt">${esc(s.from)}</span>` : '';
-      node.label = new Label(`<i>${no}</i><b>${esc(short(s.text || name, 40))}</b>${tag}<small>${esc(name)}</small>`, (target ? 'lb-proxy' : 'lb-fn') + (alt ? ' alt' : ''), pos, 32 - 4 * depth,
+      node.label = new Label(`<i>${no}</i><b>${esc(short(s.text || name, 40))}</b>${tag}<small>${esc(name)}</small>`, (target ? 'lb-proxy' : 'lb-fn') + (alt ? ' alt' : ''), pos, 44 - 4 * depth,
         { style: `--k:${color}`, dy: 15, ent: { type: target ? 'proxy' : 'fn', key } });
       if (s.ref) node.code = new Label(codeHtml(s.ref, 4), 'lb-code', pos, 22, { mode: 'below', dy: 44, ent: { type: 'code', ref: s.ref } });
       // the call itself, unless the arc already draws it (a call from the bead just before)
@@ -511,7 +518,7 @@ export function buildDetail(p) {
       // this step's sub-flows, one after another on an arc further out, starting at this bead
       let t = th;
       for (let c = 0; c < flows.length; c++) if (parent[c]?.k === k && parent[c].i === i) {
-        const R = r + DEPTH, d = 2.4 / R;
+        const R = r + DEPTH, d = 2.9 / R;
         lay(c, t, d, R, { pos, key, names: [name, s.to, s.fn] }, no, depth + 1);
         t += ((flows[c].steps || []).length + 2) * d;
       }
