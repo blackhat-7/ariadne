@@ -442,54 +442,85 @@ function glassPlate(c, floorY) {
   const sh = new THREE.Mesh(floorShadowGeo, floorShadowMat); sh.scale.setScalar(R * 2.8); sh.position.set(c.pos.x, floorY, c.pos.z); sh.renderOrder = -3; scene.add(sh);
 }
 
-// A part's flows read as numbered beads on a ring around it, clockwise from 12 o'clock: the flow's title where it starts,
-// then one bead per step. A flow's driver (the function making most of its calls) is the part itself, so its calls are spokes
-// out from the part; any other call runs from the caller's bead. An entry port whose code is a step's is drawn as that step.
+// Map steps use placeholder actors for "whoever calls this": no real caller or callee. Failure paths are told apart by name.
+const GENERIC = /^(caller|cli|function)$/i, FAILS = /\b(exception|errors?|fail(s|ed|ure)?)\b/i;
+
+// A part's flows read as a call tree around it. Top-level flows sit on a ring, clockwise from 12 o'clock: a title chip where
+// each starts, then one bead per step, numbered (A1, A2… when there are several), failure paths last and muted. A flow
+// that details one step (a sub-flow) fans out on a smaller arc beyond that step's bead, numbered under it (A5.1, A5.2…), so
+// distance from the part is call depth. A flow's driver (the function making most of its calls) is where it hangs: the part
+// itself on the ring, the parent bead for a sub-flow; its calls are spokes from there, any other call runs from the caller's
+// bead. An entry port whose code is a step's is drawn as that step.
 export function buildDetail(p) {
-  const flows = p.flows || [], slots = flows.reduce((n, f) => n + (f.steps || []).length + 2, 0);   // a flow: its header chip, its steps, a gap
-  const rr = Math.max(p.r + 5.5, (slots * 2.6) / (Math.PI * 2)), slot = (Math.PI * 2) / Math.max(1, slots), y = p.pos.y + 1.5;
-  p.ring = rr; p.focusDist = Math.max(26, rr * 3.3);
+  const flows = p.flows || [], fails = flows.map((f) => FAILS.test(`${f.title} ${f.trigger || ''}`));
+  const callee = (s) => !s.to || GENERIC.test(s.to) || s.to === s.from ? s.fn || s.to : s.to;   // a bead's name
+  const names = (s) => { const c = callee(s); return parts.has(c) || exts.has(c) ? [c, s.fn] : [c]; };
+  // Flow b is a sub-flow of step i of flow k when b's trigger names what the step calls, or b starts where the step lands.
+  const parent = flows.map(() => null), under = (a, b) => { for (let x = a; x != null; x = parent[x]?.k) if (x === b) return true; return false; };
+  flows.forEach((B, b) => {
+    if (fails[b]) return;
+    const words = new Set(String(B.trigger || '').split(/[^\w.]+/)), first = B.steps?.[0]?.from;
+    for (const hit of [(n) => words.has(n), (n) => n === first && !GENERIC.test(first)])
+      for (let k = 0; k < flows.length && !parent[b]; k++) if (k !== b && !under(k, b))
+        (flows[k].steps || []).forEach((s, i) => { if (!parent[b] && names(s).some((n) => n && hit(n))) parent[b] = { k, i }; });
+  });
+  const top = flows.map((_, k) => k).filter((k) => !parent[k]).sort((a, b) => fails[a] - fails[b]);
+  const slots = top.reduce((n, k) => n + (flows[k].steps || []).length + 2, 0);   // a flow: its title chip, its steps, a gap
+  const rr = Math.max(p.r + 5.5, (slots * 2.6) / (Math.PI * 2)), y = p.pos.y + 1.5, DEPTH = 7;
   p.detailNodes = []; p.detailLabels = []; p.flowInfo = [];
-  const at = (th, r = rr) => new V3(p.pos.x + Math.cos(th) * r, y, p.pos.z + Math.sin(th) * r);
-  const arc = (t0, t1) => Array.from({ length: 7 }, (_, i) => at(t0 + ((t1 - t0) * i) / 6));
-  const short = (s = '', n = 34) => s.length <= n ? s : s.slice(0, s.lastIndexOf(' ', n - 1)).replace(/[\s,.;:]+$/, '') + '…';
+  const at = (th, r) => new V3(p.pos.x + Math.cos(th) * r, y, p.pos.z + Math.sin(th) * r);
+  const arc = (t0, t1, r) => Array.from({ length: 7 }, (_, i) => at(t0 + ((t1 - t0) * i) / 6, r));
+  const short = (s = '', n) => s.length <= n ? s : s.slice(0, Math.max(n - 12, s.lastIndexOf(' ', n - 1))).replace(/[\s,.;:]+$/, '') + '…';
   const ports = new Map((p.exposes || []).filter((e) => e.ref).map((e) => [e.ref, e])), merged = new Set();
   const track = new THREE.Color(THEME.track);
-  let th = -Math.PI / 2;
-  flows.forEach((f, k) => {
-    const steps = f.steps || [], calls = {};
-    for (const s of steps) calls[s.from] = (calls[s.from] || 0) + 1;
-    const top = Object.keys(calls).reduce((a, b) => (calls[b] > calls[a] ? b : a), steps[0]?.from);
-    const driver = calls[top] >= 2 && calls[top] * 2 >= steps.length ? top : null;
-    const title = new Label(`<i>▶</i>${esc(f.title)}`, 'lb-flow', at(th), 48, { dy: 10, ent: { type: 'flow', id: `${p.id}#${k}` } });
-    const fi = { steps: [], spine: [], title }, beads = [], last = new Map();
-    p.detailLabels.push(title);
+  let far = rr;
+  // Lay flow k out from angle th0 in steps of dth at radius r. hub: the parent bead (sub-flow) or null (ring: the part).
+  const lay = (k, th0, dth, r, hub, num, depth) => {
+    const f = flows[k], steps = f.steps || [], calls = {}, alt = fails[k];
+    for (const s of steps) if (!GENERIC.test(s.from)) calls[s.from] = (calls[s.from] || 0) + 1;
+    const most = Object.keys(calls).reduce((a, b) => (calls[b] > calls[a] ? b : a), null);
+    const driver = calls[most] >= 2 && calls[most] * 2 >= steps.length ? most : null;
+    const home = new Set([driver, ...(hub ? hub.names : [])]);   // callers that are the hub itself
+    far = Math.max(far, r);
+    const title = new Label(`<i>${num || '▶'}</i>${esc(f.title)}`, 'lb-flow' + (alt ? ' alt' : '') + (hub ? ' sub' : ''), at(th0, r), 48 - 6 * depth, { dy: 10, ent: { type: 'flow', id: `${p.id}#${k}` } });
+    const fi = { steps: [], spine: [], title, alt }, beads = [], last = new Map();
+    p.flowInfo[k] = fi; p.detailLabels.push(title);
+    if (hub) fi.spine.push(trackSet.add([hub.pos, at(th0, r)], track, p));   // the sub-flow hangs off its parent bead
     steps.forEach((s, i) => {
-      fi.spine.push(trackSet.add(arc(th, th + slot), track, p));
-      th += slot;
-      const pos = at(th), key = `${p.id}#${k}.${i}`, target = parts.get(s.to) || exts.get(s.to), into = s.to === driver;
-      const color = target ? (parts.has(s.to) ? KINDS[kindOf(target)].color : EXT[extOf(target)].color) : THEME.fnNode;
-      const node = addNode(key, target ? 'proxy' : 'fn', target ? 'proxy' : 'fn', pos, target ? 0.55 : 0.42, color, { owner: p, flow: k, step: i, name: s.to, ref: s.ref, fn: s.fn, target });
+      const th = th0 + (i + 1) * dth, pos = at(th, r), key = `${p.id}#${k}.${i}`, name = callee(s), self = s.to === s.from;
+      fi.spine.push(trackSet.add(arc(th - dth, th, r), track, p));
+      const target = parts.get(name) || exts.get(name), into = !self && home.has(s.to), no = `${num ? num + (hub ? '.' : '') : ''}${i + 1}`;
+      const color = target ? (parts.has(name) ? KINDS[kindOf(target)].color : EXT[extOf(target)].color) : THEME.fnNode;
+      const node = addNode(key, target ? 'proxy' : 'fn', target ? 'proxy' : 'fn', pos, (target ? 0.55 : 0.42) * (hub ? 0.8 : 1), color, { owner: p, flow: k, step: i, no, name, ref: s.ref, fn: s.fn, target });
       if (!target && s.ref && state.M.code?.[s.ref]?.verified === false) node.icons.push({ cell: 'warn', scale: 0.75, off: 0.9, color: THEME.amber });
-      // the call's two ends: this bead, and the part (driver), the caller's latest bead, the bead before, or outside
-      const me = { pos, key }, rim = { pos: at(th, p.r * 0.95), key: p.id };
-      const other = into || s.from === driver ? rim : last.get(s.from) || beads[i - 1] || { pos: at(th, rr + 3.5), key };
-      const [a, b] = into ? [me, rim] : [other, me];
+      // the call's two ends: this bead, and the hub (driver), the caller's latest bead, the bead before, or outside
+      const me = { pos, key }, base = hub || { pos: at(th, p.r * 0.95), key: p.id }, out = { pos: at(th, r + 3), key };
+      const other = into || self || home.has(s.from) ? base : last.get(s.from) || (GENERIC.test(s.from) ? out : beads[i - 1] || out);
+      const [a, b] = into ? [me, base] : [other, me];
       const port = ports.get(s.ref), pt = port && (PORTS[port.type] || PORTS.function); if (port) merged.add(port);
-      const free = s.from && s.from !== driver && !last.has(s.from) && (into || !i);   // a caller from outside the ring: name it
+      const free = other === out && s.from && !GENERIC.test(s.from);   // a caller from outside the flow: name it
       const tag = pt ? `<span class="pt" style="--c:${pt.color}">${pt.label}</span>` : free ? `<span class="pt">${esc(s.from)}</span>` : '';
-      node.label = new Label(`<i>${i + 1}</i><b>${esc(s.to)}</b>${tag}<small>${esc(short(s.text))}</small>`, target ? 'lb-proxy' : 'lb-fn', pos, 32,
+      node.label = new Label(`<i>${no}</i><b>${esc(short(s.text || name, 40))}</b>${tag}<small>${esc(name)}</small>`, (target ? 'lb-proxy' : 'lb-fn') + (alt ? ' alt' : ''), pos, 32 - 4 * depth,
         { style: `--k:${color}`, dy: 15, ent: { type: target ? 'proxy' : 'fn', key } });
       if (s.ref) node.code = new Label(codeHtml(s.ref, 4), 'lb-code', pos, 22, { mode: 'below', dy: 44, ent: { type: 'code', ref: s.ref } });
-      // the call itself, unless the ring already draws it (a call from the bead just before)
-      const seg = other === beads[i - 1] ? null : trackSet.add(other === rim ? [a.pos, b.pos] : curve(a.pos, b.pos, 0.2, 0).getPoints(16), track, p);
+      // the call itself, unless the arc already draws it (a call from the bead just before)
+      const seg = other === beads[i - 1] ? null : trackSet.add(other === base || other === out ? [a.pos, b.pos] : curve(a.pos, b.pos, 0.2, 0).getPoints(16), track, p);
       fi.steps.push({ a: a.pos, b: b.pos, ka: a.key, kb: b.key, seg });
-      beads.push(me); if (!into) last.set(s.to, me);
+      beads.push(me); if (!into) last.set(name, me);
       p.detailNodes.push(node); p.detailLabels.push(node.label);
+      // this step's sub-flows, one after another on an arc further out, starting at this bead
+      let t = th;
+      for (let c = 0; c < flows.length; c++) if (parent[c]?.k === k && parent[c].i === i) {
+        const R = r + DEPTH, d = 2.4 / R;
+        lay(c, t, d, R, { pos, key, names: [name, s.to, s.fn] }, no, depth + 1);
+        t += ((flows[c].steps || []).length + 2) * d;
+      }
     });
-    th += slot * 2;
-    p.flowInfo.push(fi);
-  });
+  };
+  const slot = (Math.PI * 2) / Math.max(1, slots), letters = top.length > 1;
+  let th = -Math.PI / 2;
+  top.forEach((k, j) => { lay(k, th, slot, rr, null, letters ? String.fromCharCode(65 + j) : '', 0); th += ((flows[k].steps || []).length + 2) * slot; });
+  p.ring = rr; p.focusDist = Math.max(26, rr * 3.3, far * 2.6);
   (p.exposes || []).filter((e) => !merged.has(e)).forEach((e, i, arr) => {
     const th = Math.PI / 2 + (i - (arr.length - 1) / 2) * 0.5;   // fanned out in front of the part
     const pos = new V3(p.pos.x + Math.cos(th) * (p.r + 2.4), p.pos.y - 0.8, p.pos.z + Math.sin(th) * (p.r + 2.4));
@@ -669,7 +700,7 @@ export function updateLOD(dt) {
       const fi = p.flowInfo[k], cur = player.part === p && player.k === k ? player.i : -1;   // the step playing, if any
       if (lu > 0.01) faceOut(fi.title, p, cam);
       fi.title.want = lu * (1 - smooth(Math.max(40, p.focusDist * 1.8), Math.max(64, p.focusDist * 2.6), camPos.distanceTo(fi.title.pos)));
-      for (const s of fi.spine) trackSet.setAlpha(s, u * 0.5, tracksPulse);
+      for (const s of fi.spine) trackSet.setAlpha(s, u * (fi.alt ? 0.22 : 0.5), tracksPulse);
       for (let i = 0; i < fi.steps.length; i++) if (fi.steps[i].seg) trackSet.setAlpha(fi.steps[i].seg, u * (i === cur ? 0.9 : 0.2), i === cur ? 1 : 0);
     }
   }

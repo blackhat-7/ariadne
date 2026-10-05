@@ -261,7 +261,7 @@ export function hoverHtml(ent) {
   if (n.type === 'port') { const t = PORTS[n.expose.type] || PORTS.function; return readout({ code: true, kind: t.label, color: t.color, name: n.expose.what, sub: p.name, subColor: p.clusterObj.color, file: n.ref, summary: `How work enters ${p.name}` }); }
   const f = p.flows[n.flow];
   return readout({ code: true, kind: n.type === 'proxy' ? 'calls out' : 'step', color: n.type === 'proxy' ? 'var(--blue)' : 'var(--cyan)', name: n.name, sub: p.name, subColor: p.clusterObj.color, file: n.ref,
-    summary: f.steps[n.step].text, stats: [stat(I.flow, n.step + 1, `of ${f.steps.length} steps in “${f.title}”`)] });
+    summary: f.steps[n.step].text, stats: [stat(I.flow, n.no, `in “${f.title}”`)] });
 }
 
 export function openPanel() { detail.classList.add('open'); document.body.classList.add('detail-open'); }
