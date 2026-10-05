@@ -1,12 +1,12 @@
 // hud.js
 // Exports: labelLayer, labels, Label, cand, acc, tmpV, updateLabels, hoverEl, updateHover, hoverHtml, detail, dbody, codeslot, openPanel, closeDetail, rf, goLink, flowHtml, showDetail, openCode, openExcerpt, level, updateCrumbs, stepOut, mini, mg, drawMini, buildSearch, fuzzy, runSearch, renderResults, openSearch, closeSearch, shapeIcons, buildLegend, setKinds, resizable, addHandle, panelMax, panelMin, initLabels, initHoverCard, initDetailPanel, initBreadcrumb, initMinimap, initSearch, initLegend, initResizablePanels
-// Imports: state: state | board: buildStruct, disposeStruct, flyToBoard, setFacing, setGateLines, structs | drawer: codeHtml, drawer, dtree, getJSON, openFile | main: act | scene: G, SHAPES, camPos, camera, clusters, controls, dive, docks, entFromEvent, entFromNode, exts, flyOverview, flyToEnt, gotoStep, kindOn, nodes, parts, playFlow, player, recolor, select, setEmphasis, stage | theme: EXT, KINDS, PORTS, VOXEL, extOf, kindOf | util: $, V3, clamp, esc | voxel: voxPreview | voxels: externalModel, partModel
+// Imports: state: state | board: buildStruct, disposeStruct, flyToBoard, openLens, setFacing, setGateLines, structs | drawer: codeHtml, drawer, dtree, getJSON, openFile | main: act | scene: nodeByKey, G, SHAPES, camPos, camera, clusters, controls, dive, docks, entFromEvent, entFromNode, exts, flyOverview, flyToEnt, gotoStep, kindOn, nodes, parts, playFlow, player, recolor, select, setEmphasis, stage | theme: EXT, KINDS, PORTS, VOXEL, extOf, kindOf | util: $, V3, clamp, esc | voxel: voxPreview | voxels: externalModel, partModel
 import * as THREE from 'three';
 import { state } from './state.js';
-import { buildStruct, disposeStruct, flyToBoard, setFacing, setGateLines, structs } from './board.js';
+import { buildStruct, disposeStruct, flyToBoard, openLens, setFacing, setGateLines, structs } from './board.js';
 import { codeHtml, drawer, dtree, getJSON, openFile } from './drawer.js';
 import { act } from './main.js';
-import { G, SHAPES, camPos, camera, clusters, controls, dive, docks, entFromEvent, entFromNode, exts, flyOverview, flyToEnt, gotoStep, kindOn, nodes, parts, playFlow, player, recolor, select, setEmphasis, stage } from './scene.js';
+import { camera, camPos, clusters, controls, dive, docks, entFromEvent, entFromNode, exts, flyOverview, flyToEnt, G, gotoStep, kindOn, nodeByKey, nodes, parts, player, playFlow, recolor, select, setEmphasis, SHAPES, stage } from './scene.js';
 import { EXT, KINDS, PORTS, VOXEL, extOf, kindOf } from './theme.js';
 import { $, V3, clamp, esc } from './util.js';
 import { voxPreview } from './voxel.js';
@@ -267,7 +267,7 @@ export function hoverHtml(ent) {
 
 export function openPanel() { detail.classList.add('open'); document.body.classList.add('detail-open'); }
 
-export function closeDetail() { detail.classList.remove('open'); document.body.classList.remove('detail-open'); codeslot.innerHTML = ''; }
+export function closeDetail() { state.detailFull = false; detail.classList.remove('open'); document.body.classList.remove('detail-open'); codeslot.innerHTML = ''; }
 
 export function flowHtml(id, f) {
   return `<div class="flow" data-flow="${esc(id)}"><div class="fh"><button class="play" data-play="${esc(id)}" title="Play">${I.play}</button><div class="t"><b>${esc(f.title)}</b><small>${esc(f.trigger || '')}</small></div><button class="play fx" data-fflow="${esc(id)}" title="Focus: show only what this flow touches">${I.focus}</button></div>
@@ -296,7 +296,7 @@ export function showDetail(ent) {
     if (p.struct) {
       const S = p.struct, c = { type: 0, method: 0, function: 0 }; for (const it of S.items) if (!it.test || state.showTests) c[it.kind]++;
       h += sec('Code structure', `<div class="stats">${stat(I.type, c.type, 'types', 'green')}${stat(I.method, c.method, 'methods', 'violet')}${stat(I.fn, c.function, 'functions', 'cyan')}</div>
-        <p class="meta" title="Explore in 3D draws the code as a metro map: each line follows an entry point through the functions it calls. The Lens shows a function's callers and callees.">Metro: ${S.lines.length} lines through ${S.placed.length} stations · click a station for the Lens</p>
+        <p class="meta" title="Explore in 3D draws the code as a metro map: each line follows an entry point through the functions it calls. The Lens shows a function's callers and callees.">Metro: ${S.lines.length} lines through ${S.placed.length} stations · double-click a station for the Lens</p>
         <div class="ctl"><button class="btn primary" data-struct="${esc(p.id)}">${I.cube}Explore in 3D</button>
         <label class="tog"><input type="checkbox" data-tests ${state.showTests ? 'checked' : ''}><i></i>Tests</label></div>`);
     } else if (state.codeApi && state.structStatus === 'building') h += sec('Code structure', `<div class="skel"><i></i><i></i><i></i></div><p class="meta">Indexing the repo…</p>`);
@@ -339,7 +339,11 @@ export function showDetail(ent) {
     }
     if (n.ref) h += `<div class="code">${codeHtml(n.ref)}</div>`;
   }
+  // A click shows the short version (name, summary, actions); "More details" or a double-click the whole panel.
+  const lens = ent.type === 'snode' ? `<button class="btn tinted" data-lens="${esc(ent.node.item.key)}">${I.cube}Open Lens</button>` : '';
+  h += `<div class="ctl more-row">${lens}<button class="btn" data-more>More details</button></div>`;
   dbody.innerHTML = h; openPanel(); dbody.parentElement.scrollTop = 0;
+  detail.classList.toggle('compact', !state.detailFull);
   if (ent.type === 'part') { fillGates(ent.id); fillStates(ent.id); }
 }
 
@@ -777,6 +781,8 @@ export function initDetailPanel() {
   detail.addEventListener('click', (e) => {
     const t = e.target;
     const gt = t.closest('[data-gate]'); if (gt) return pinGate(gt.dataset.gate, gt);
+    if (t.closest('[data-more]')) { state.detailFull = true; return detail.classList.remove('compact'); }
+    const ln = t.closest('[data-lens]'); if (ln) return openLens(nodeByKey.get(ln.dataset.lens).item);
     const sh = t.closest('.sh');
     if (sh) { const s = sh.parentElement, c = s.classList.toggle('closed'); closedSecs[c ? 'add' : 'delete'](s.dataset.sec); return; }
     if (t.closest('[data-closecode]')) { codeslot.innerHTML = ''; if (!state.selected) closeDetail(); return; }

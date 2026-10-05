@@ -1,6 +1,6 @@
 // scene.js
 // Exports: LOW, setResolution, solidMats, shadowMat, lineRes, spinTime, bgColor, fatLoop, slab, stage, renderer, scene, camera, controls, rt, composer, bloom, uTime, nodeMats, ATLAS, CELL, atlasCv, atlasCtx, atlasCells, LUCIDE, atlasTex, atlasCell, iconMat, lineMat, tubeMat, shellMat, LineSet, curve, parts, clusters, exts, docks, nodes, nodeByKey, meshes, linkSet, trackSet, streams, at, merge, G, SHAPES, AMBER, addNode, shapeOfPart, partScale, build, buildDetail, kindOn, recolor, setEmphasis, markReview, dimOf, camPos, updateLOD, fly, fv, flyTo, updateViewOffset, updateFly, flyOverview, flyToEnt, resolveEnt, entFromNode, findEnt, select, labelOf, dive, ray, ndc, pick, entFromEvent, player, MOVE, STEP, pulseTex, pulse, trailGeo, trail, flowById, actorPos, actorKey, playFlow, gotoStep, stopFlow, pv, updatePlayer, isMac, isTrackpad, navPlane, navP, navN, navR, navU, zoomAt, panBy, gestureOpts, initThreeSetup, initShaders, initWorldModel, initState, initLod, initCameraFlight, initPicking, initFlowPlayback, initNavigation
-// Imports: state: state | nav: remember | board: boardNear, flyToBoard, openLens, setFacing, updateStructs | drawer: codeHtml, drawer, openFile | hud: Label, closeDetail, detail, hoverEl, openCode, showDetail | links: STYLE, entryOf, linkKind, streamKind, streamText | theme: EXT, KINDS, PORTS, QUALITY, THEME, VOXEL, extOf, kindOf | util: $, V3, clamp, ease, esc, hashStr, rng, smooth | voice: cancelSpeech, pauseSpeech, renderVoiceButton, resumeSpeech, speak, stepSpeech, voice | voxel: BOX, CUBE, RING, followSun, refreshShadows, setVoxAlpha, setVoxHot, setupVoxel, uWorld, voxCart, voxIsland, voxMesh, voxNode | voxels: cart, externalModel, partModel
+// Imports: state: state | nav: remember | board: boardNear, flyToBoard, setFacing, updateStructs | drawer: codeHtml, drawer, openFile | hud: Label, closeDetail, detail, hoverEl, openCode, showDetail | links: STYLE, entryOf, linkKind, streamKind, streamText | theme: EXT, KINDS, PORTS, QUALITY, THEME, VOXEL, extOf, kindOf | util: $, V3, clamp, ease, esc, hashStr, rng, smooth | voice: cancelSpeech, pauseSpeech, renderVoiceButton, resumeSpeech, speak, stepSpeech, voice | voxel: BOX, CUBE, RING, followSun, refreshShadows, setVoxAlpha, setVoxHot, setupVoxel, uWorld, voxCart, voxIsland, voxMesh, voxNode | voxels: cart, externalModel, partModel
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -15,7 +15,7 @@ import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { state } from './state.js';
-import { boardNear, flyToBoard, openLens, setFacing, updateStructs } from './board.js';
+import { boardNear, flyToBoard, setFacing, updateStructs } from './board.js';
 import { codeHtml, drawer, openFile } from './drawer.js';
 import { Label, closeDetail, detail, hoverEl, openCode, showDetail } from './hud.js';
 import { EXT, KINDS, PORTS, QUALITY, THEME, VOXEL, extOf, kindOf, mute } from './theme.js';
@@ -937,6 +937,7 @@ export function dive(ent) {
   if (!ent) return;
   if (ent.type === 'flow') return playFlow(ent.id);
   if (ent.type === 'code') return openCode(ent.ref);
+  state.detailFull = true;   // a deliberate jump (double-click, search): the whole panel
   select(ent); flyToEnt(ent);
 }
 
@@ -1445,8 +1446,7 @@ export function initPicking() {
     if (!ent) { if (!player.on) select(null); return; }
     if (ent.type === 'flow') return playFlow(ent.id);
     if (ent.type === 'code') return openCode(ent.ref);
-    if (ent.type === 'snode') return openLens(ent.node.item);
-    select(ent);
+    select(ent);   // a click selects (short card); a double-click opens it fully
   });
   stage.addEventListener('dblclick', (e) => { const ent = entFromEvent(e); if (ent) dive(ent); });
   state.mouse = null;

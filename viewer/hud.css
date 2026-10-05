@@ -178,6 +178,11 @@ body.show-changes .chg{visibility:visible}
 /* ---------- detail panel ---------- */
 #detail{right:16px;top:16px;bottom:16px;width:var(--w,min(400px,calc(100vw - 32px)));display:none;flex-direction:column;overflow:hidden;border-radius:16px}
 #detail.open{display:flex;animation:panelIn .28s cubic-bezier(.2,.8,.2,1)}
+/* a click shows the short card: name, summary, actions; "More details" (or a double-click) the whole panel */
+#detail.compact{bottom:auto;max-height:calc(100vh - 32px)}
+#detail.compact :is(.sec,.code,p.dim,p.note,[data-slot],#codeslot){display:none}
+#detail:not(.compact) .more-row [data-more]{display:none}
+#detail:not(.compact) .more-row:not(:has([data-lens])){display:none}
 @keyframes panelIn{from{opacity:0;translate:12px 0;scale:.98}}
 body.detail-open #hint{display:none}
 #dclose{position:absolute;right:12px;top:12px;z-index:2;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;color:var(--dim);background:var(--white-a07)}
