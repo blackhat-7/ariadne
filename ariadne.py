@@ -1600,7 +1600,7 @@ def serve(args):
         def send(self, code, data, ctype):
             self.send_response(code)
             self.send_header("Content-Type", ctype)
-            self.send_header("Cache-Control", "no-cache")  # always pick up a rebuilt map or viewer
+            self.send_header("Cache-Control", "no-store")  # never a stale viewer after an upgrade or a rebuilt map (some browsers reuse no-cache scripts)
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
