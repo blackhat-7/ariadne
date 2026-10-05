@@ -1,28 +1,33 @@
 // review.js
 // Exports: reviewFn, xrayRev, diffOps, mergeXray, openChangeLine, initReview
-// Imports: state: state | board: flyToBoard, openLens, setFacing, setGateLines, spoken | chat: openSettings | drawer: dcode, drawer, getJSON, highlightLines, markTree, openFile, postJSON, reloadFile | hud: I, openCode | scene: camPos, controls, fly, flyToEnt, markReview, parts, player, recolor, setEmphasis | util: $, clamp, esc | voice: cancelSpeech, speakFlow, voice | xray: blocksOf, focusChange, headOf, itemIds
-// PR review mode (REVIEW.md): the Review panel (PR, stats, narrative, the change list with filters, keys and reviewed
-// state), risk on the map, the merged head/base x-ray data, the code drawer's Diff view, the review tour, the branch/PR
-// picker and the stale-map banner. Everything shown comes from the server's deterministic review JSON.
+// Imports: state: state | board: flyToBoard, openLens, setFacing, setGateLines, spoken | chat: openSettings | drawer: dcode, drawer, getJSON, highlightLines, markTree, openFile, postJSON, reloadFile | hud: I, openCode | prflow: flowShown, hideFlow, initFlow, setFlow, showFlow | scene: camPos, controls, fly, flyTo, flyToEnt, markReview, parts, player, recolor, setEmphasis | util: $, V3, clamp, esc | voice: cancelSpeech, speakFlow, voice | xray: blocksOf, focusChange, headOf, itemIds
+// PR review mode (REVIEW.md): the Review panel (the PR and its description, changes to existing code, the new code in
+// reading order, data, config, tests; keys and reviewed state), the Flow / Map switch, the map resting on the PR's parts,
+// the merged head/base x-ray data, the code drawer's Diff view, the review tour, the branch/PR picker and the stale-map
+// banner. Everything shown comes from the server's deterministic review JSON.
 import { state } from './state.js';
 import { flyToBoard, openLens, setFacing, setGateLines, spoken } from './board.js';
 import { dcode, drawer, getJSON, highlightLines, markTree, openFile, postJSON, reloadFile } from './drawer.js';
 import { openSettings } from './chat.js';
 import { I, openCode } from './hud.js';
-import { camPos, controls, fly, flyToEnt, markReview, parts, player, recolor, setEmphasis } from './scene.js';
-import { $, clamp, esc } from './util.js';
+import { flowShown, hideFlow, initFlow, setFlow, showFlow } from './prflow.js';
+import { camPos, controls, fly, flyTo, flyToEnt, markReview, parts, player, recolor, setEmphasis } from './scene.js';
+import { $, V3, clamp, esc } from './util.js';
 import { cancelSpeech, speakFlow, voice } from './voice.js';
 import { blocksOf, focusChange, headOf, itemIds } from './xray.js';
 
 const RANK = { high: 3, medium: 2, low: 1, none: 0 };
 const RISK_COLOR = { high: '#ff6b5e', medium: '#f2b04d', low: '#8fd3f0' };
 const STATUS = { added: 'new', removed: 'deleted' };
-const CAM_KEY = 'ariadne.reviewCam', FILTER_KEY = 'ariadne.reviewFilters';
+const CAM_KEY = 'ariadne.reviewCam';
 
 // data: the review JSON. head: the selected head as the API names it ("<branch>" | "pr:<N>"), '' = the server's own review.
-// rows: the visible functions in list order; cur: the highlighted one (its id). done: reviewed function ids.
-const R = { data: null, head: '', base: '', rows: [], cur: null, opened: null, on: false, done: new Set(), f: { hideLow: false },
-  diffs: new Map(), diffOn: true, narr: null, narrBusy: false, narrNote: '', map: null, tour: null, busy: null, error: '', blastSaved: null };
+// rows: the functions in panel order (changed ones, then new code in reading order); cur: the highlighted one (its id).
+// done: reviewed function ids. order/depth/via: reading order (reading()). open: sections' open state. more: the full
+// description shown; md, mmdSrc, mmd: its HTML, mermaid sources and drawn diagrams. edge: the clicked lifecycle arrow.
+const R = { data: null, head: '', base: '', rows: [], cur: null, opened: null, on: false, done: new Set(), order: [], depth: new Map(), via: new Map(),
+  analysed: new Set(), dups: new Set(), open: {}, more: false, md: null, mmdSrc: [], mmd: new Map(), edge: null,
+  diffs: new Map(), diffOn: true, narr: null, narrBusy: false, narrNote: '', map: null, tour: null, busy: null, error: '', blastSaved: null, camKept: false };
 let panel, tourBar, pick = null;
 
 const fnById = (id) => R.data?.functions.find((f) => f.id === id);
@@ -194,7 +199,7 @@ export async function openChangeLine(file, headLine, baseLine) {
 /* ---------------- loading ---------------- */
 // The server's current review; with none selected yet, the checkout (with its uncommitted changes) is reviewed.
 async function loadReview() {
-  R.busy = 'load'; R.error = ''; render();
+  R.busy = 'load'; R.error = ''; R.want = null; render();
   let j;
   try { j = await getJSON('/api/review'); } catch { R.busy = null; R.error = 'The server did not answer.'; return render(); }
   R.busy = null;
@@ -207,6 +212,7 @@ async function loadReview() {
 async function selectHead(head, base = '') {
   R.ctl?.abort();
   const ctl = R.ctl = new AbortController();
+  R.want = [head, base];   // what Retry asks for again
   R.busy = { h: head }; R.error = ''; closePicker(); render();
   try {
     const j = await postJSON('/api/review/select', base ? { head: head || null, base } : { head: head || null }, { signal: ctl.signal });
@@ -225,21 +231,40 @@ const headLabel = (h) => (!h ? 'the working copy' : h.startsWith('pr:') ? `PR #$
 function setReview(j, head, base = '') {
   stopTour();
   R.data = j; R.head = head; R.base = base; R.diffs.clear(); R.narr = null; R.narrNote = ''; R.map = null;
+  Object.assign(R, reading(j), { more: false, md: null, mmdSrc: [], mmd: new Map(), edge: null, analysed: new Set(j.functions.map((f) => f.file)),
+    dups: new Set(j.functions.map((f) => f.name).filter((n, i, a) => a.indexOf(n) !== i)) });   // same-named functions show their folder
+  R.rows = [...R.order.map(fnById).filter((f) => !isNew(f)), ...R.order.map(fnById).filter(isNew)];
   try { R.done = new Set(JSON.parse(localStorage.getItem('ariadne.reviewed.' + j.head?.rev) || '[]')); } catch { R.done = new Set(); }
   const hash = head ? `#review=${head.startsWith('pr:') ? head : 'branch:' + head}${base ? '&base=' + encodeURIComponent(base) : ''}` : '#review';
   if (location.hash !== hash) history.replaceState(history.state, '', hash);   // keeps back/forward's entry (nav.js)
   showPanel(true);
   markReview(Object.fromEntries(j.parts.filter((p) => RISK_COLOR[p.risk]).map((p) => [p.id, RISK_COLOR[p.risk]])));
-  R.cur = null; R.shownCur = undefined; render();
+  R.cur = R.rows[0]?.id || null; R.shownCur = undefined;
+  if (j.functions.length) showFlow(j, { cur: R.cur, done: R.done }); else hideFlow();   // the new flow is the first view
+  render();
+  restOn(j.parts.map((p) => p.id).filter((id) => parts.has(id)));
   loadMapStatus();
   state.reviewFiles = j.files; markTree();
   reloadFile();   // a changed file shows as its diff, or as plain code again
 }
 
+// While reviewing, the map rests on the PR's parts: the rest fades as with a selection, and Esc comes back here (scene.js
+// setEmphasis). The camera frames them once, unless a camera saved across a re-map reload came back.
+function restOn(ids) {
+  state.restEmph = ids?.length ? ids : null;
+  if (!state.selected && !player.on) setEmphasis(null);
+  state.redraw = true;
+  if (!state.restEmph || R.camKept) { R.camKept = false; return; }
+  const ps = ids.map((id) => parts.get(id));
+  if (ps.length === 1) return flyToEnt({ type: 'part', id: ids[0] });
+  const c = ps.reduce((a, p) => a.add(p.pos), new V3()).divideScalar(ps.length);
+  flyTo(c, clamp(Math.max(...ps.map((p) => c.distanceTo(p.pos) + p.r)) * 2.8, 40, state.overviewDist * 1.2));
+}
+
 // Review mode on or off. While on, the panel can be hidden: the diff view, map rings and x-ray marks stay.
 function showPanel(on) {
   R.on = on;
-  if (!on) { markReview(null); stopTour(); blast(null); $('#dview').hidden = true; }
+  if (!on) { markReview(null); stopTour(); blast(null); hideFlow(); restOn(null); $('#dview').hidden = true; }
   hidePanel(false);
 }
 
@@ -262,35 +287,145 @@ function exitReview() {
   reloadFile();
 }
 
-/* ---------------- the panel ---------------- */
-function visible() {
-  const fs = R.data.functions.filter((f) => !R.f.hideLow || RANK[f.risk] > 1);
-  const groups = new Map();
-  for (const f of fs) { const k = f.part || ''; if (!groups.has(k)) groups.set(k, { id: k, fns: [], files: [] }); groups.get(k).fns.push(f); }
-  const analysed = new Set(R.data.functions.map((f) => f.file));
-  for (const file of R.data.files) {
-    if (analysed.has(file.path) || file.test || file.generated || R.f.hideLow) continue;   // generated and tests: one line at the end
-    const k = file.part || ''; if (!groups.has(k)) groups.set(k, { id: k, fns: [], files: [] }); groups.get(k).files.push(file);
-  }
-  const top = (g) => Math.max(0, ...g.fns.map((f) => RANK[f.risk]));
-  for (const g of groups.values()) g.fns.sort((a, b) => RANK[b.risk] - RANK[a.risk] || a.name.localeCompare(b.name));
-  return [...groups.values()].sort((a, b) => top(b) - top(a) || partName(a.id).localeCompare(partName(b.id)));
+/* ---------------- the panel ----------------
+   In the reviewer's order: what the PR is for, changes to existing behaviour (riskiest), the new code in reading order
+   (call depth as indent), then data, config and deploy, tests and generated files, each a quiet collapsible section. */
+const isNew = (f) => f.status === 'added';
+
+// Reading order (the flow's, else the server's list) and, walking calls from the flow's roots, each function's depth
+// and the call that first reaches it (its condition shows on hover).
+function reading(d) {
+  const ids = new Set(d.functions.map((f) => f.id)), depth = new Map(), via = new Map();
+  const walk = (id, k) => { if (depth.has(id)) return; depth.set(id, k); for (const c of fnById(id)?.calls || []) { if (!depth.has(c.to)) via.set(c.to, c); walk(c.to, k + 1); } };
+  for (const r of d.flow?.roots || []) walk(r, 0);
+  const order = (d.flow?.order || d.functions.map((f) => f.id)).filter((id) => ids.has(id));
+  return { order, depth, via };
 }
 
 const dot = (risk) => `<span class="rv-dot ${esc(risk)}" title="${esc(risk)} risk"></span>`;
 
-function chips(f) {
-  return f.changes.map((c, ci) => `<button class="rv-chip ${esc(c.severity)}${/invert/i.test(c.why) ? ' inv' : ''}" data-ci="${ci}" title="${esc([c.why, c.before && `before: ${c.before}`, c.after && `after: ${c.after}`, c.target && `target: ${c.target}`].filter(Boolean).join('\n'))}">${esc(c.why)}</button>`).join('');
+// Change chips, riskiest first; repeats of one change fold into one chip (×n). With max, the rest is a count.
+function chips(f, keep = () => true, max = Infinity) {
+  const by = new Map();
+  f.changes.forEach((c, ci) => { if (keep(c)) by.has(c.why) ? by.get(c.why).n++ : by.set(c.why, { c, ci, n: 1 }); });
+  const all = [...by.values()].sort((a, b) => RANK[b.c.severity] - RANK[a.c.severity]), rest = all.length - max;
+  return all.slice(0, max).map(({ c, ci, n }) => `<button class="rv-chip ${esc(c.severity)}${/invert/i.test(c.why) ? ' inv' : ''}" data-ci="${ci}" title="${esc([c.why, c.before && `before: ${c.before}`, c.after && `after: ${c.after}`, c.target && `target: ${c.target}`].filter(Boolean).join('\n'))}">${esc(c.why)}${n > 1 ? ` <em>×${n}</em>` : ''}</button>`).join('')
+    + (rest > 0 ? `<span class="rv-chip-more" title="Open it to see every change">+${rest} more</span>` : '');
+}
+
+// "writes orders · calls payments": what the function touches, by operation.
+function effectText(f) {
+  const by = new Map();
+  for (const e of f.effects || []) by.set(e.op, new Set([...(by.get(e.op) || []), e.target]));
+  return [...by].map(([op, ts]) => `${op} ${[...ts].join(', ')}`).join(' · ');
 }
 
 // Long names break at camelCase humps and separators, not mid-word.
 const wrapName = (s) => esc(s).replace(/([._/])/g, '$1<wbr>').replace(/([a-z0-9])([A-Z])/g, '$1<wbr>$2');
-const fileRow = (f) => `<button class="rv-frow" data-file="${esc(f.path)}" title="${esc(f.path)}">${I.file}<span>${esc(short(f.path))}</span>${f.generated ? '<em>generated</em>' : ''}${f.test ? '<em>test</em>' : ''}<small>+${f.added} −${f.removed}</small></button>`;
+// A file: its name, then its folder (the last two levels, muted), so same-named files tell apart.
+const fileRow = (f, icon = I.file) => `<button class="rv-frow" data-file="${esc(f.path)}" title="${esc(f.path)}">${icon}<span>${esc(f.path.split('/').pop())}</span><em>${esc(f.path.split('/').slice(-3, -1).join('/'))}</em>${f.added != null ? `<small>+${f.added} −${f.removed}</small>` : ''}</button>`;
+const names = (ids) => ids.map((id) => fnById(id)?.name || id.split('::').pop());
+
+// A row: name, summary, effects. A changed function adds its riskiest change chips and who reaches it; new code is
+// indented by call depth and keeps only chips that matter (medium and high, not already said by its effects).
+function rowHtml(f) {
+  const on = f.id === R.cur, done = R.done.has(f.id), fresh = isNew(f), fx = effectText(f), b = f.blast || { entries: [], callers: [] };
+  const said = new Set((f.effects || []).map((e) => `${e.op} ${e.target}`.toLowerCase()));
+  const ch = chips(f, fresh ? (c) => RANK[c.severity] > 1 && !said.has(c.why.toLowerCase()) : undefined, 3);
+  const call = R.via.get(f.id), when = call && [call.loop, call.when && `when ${call.when}`].filter(Boolean).join(', ');
+  const who = !fresh && (b.callers.length || b.entries.length) ? `<div class="rv-who">${I.inArrow}${b.callers.length ? `called by ${esc(b.callers.slice(0, 4).join(', '))}${b.callers.length > 4 ? ` +${b.callers.length - 4}` : ''}` : ''}${b.entries.length ? `${b.callers.length ? ' · ' : ''}reached from ${esc(b.entries.map((x) => x.label).join(', '))}` : ''}</div>` : '';
+  return `<div class="rv-row${on ? ' cur' : ''}${done ? ' done' : ''}" data-id="${esc(f.id)}"${fresh ? ` style="--d:${Math.min(R.depth.get(f.id) || 0, 4)}"` : ''}${when ? ` title="${esc(`Called ${when}`)}"` : ''}>
+    <label class="rv-ck" title="Reviewed (r)"><input type="checkbox"${done ? ' checked' : ''}><i></i></label>
+    <div class="rv-main"><div class="rv-nmrow"><button class="rv-nm" title="${esc(f.file)}${f.head ? ':' + f.head.start : ''}">${wrapName(f.name)}</button>${R.dups.has(f.name) ? `<span class="rv-in">${esc(f.file.split('/').slice(-2, -1)[0] || '')}</span>` : ''}${STATUS[f.status] && !fresh ? `<span class="rv-st ${esc(f.status)}">${STATUS[f.status]}</span>` : ''}</div>
+    ${f.summary ? `<div class="rv-sum" title="${esc(f.summary)}">${esc(f.summary)}</div>` : ''}${fx ? `<div class="rv-fx" title="${esc(fx)}">${esc(fx)}</div>` : ''}${who}${ch ? `<div class="rv-chips">${ch}</div>` : ''}</div></div>`;
+}
+
+// A quiet collapsible section; its open state survives re-renders (R.open, kept by the toggle listener).
+function sec(id, title, count, body, open = false) {
+  if (!body) return '';
+  return `<details class="rv-sec" data-sec="${id}"${R.open[id] ?? open ? ' open' : ''}><summary>${I.chevR}<span>${title}</span>${count ? `<em>${count}</em>` : ''}</summary><div class="rv-body">${body}</div></details>`;
+}
+
+/* ---------------- the PR description: a small safe markdown renderer ----------------
+   Everything is escaped; headings, paragraphs, lists, quotes, code, inline code, links (http only) and bold are
+   rebuilt. ```mermaid blocks become diagrams once mermaid (loaded only for them) draws them, else stay code. */
+function inl(s) {
+  const code = [];
+  return esc(s).replace(/`([^`]+)`/g, (_, c) => `\u0000${code.push(c) - 1}\u0000`)
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+    .replace(/^\[( |x)\] /i, (_, x) => (x === ' ' ? '☐ ' : '☑ '))
+    .replace(/\u0000(\d+)\u0000/g, (_, k) => `<code>${code[k]}</code>`);
+}
+
+const LIST = /^(\s*)([-*+]|\d+[.)])\s+(.*)/, BLOCK = /^\s*(```|~~~|#{1,6}\s|>|([-*+]|\d+[.)])\s)/;
+function md(src) {
+  const out = [], ls = src.split('\n');
+  for (let i = 0; i < ls.length;) {
+    const l = ls[i]; let m;
+    if ((m = /^\s*(```|~~~)\s*([\w-]*)/.exec(l))) {
+      const code = []; for (i++; i < ls.length && !ls[i].trim().startsWith(m[1]); i++) code.push(ls[i]);
+      i++;
+      const c = code.join('\n'), pre = `<pre><code>${esc(c)}</code></pre>`;
+      out.push(m[2] === 'mermaid' ? `<div class="rv-mmd" data-k="${R.mmdSrc.push(c) - 1}">${pre}</div>` : pre);
+    } else if ((m = /^(#{1,6})\s+(.*)/.exec(l))) { out.push(`<h${m[1].length < 3 ? 4 : 5}>${inl(m[2].replace(/\s#+$/, ''))}</h${m[1].length < 3 ? 4 : 5}>`); i++; }
+    else if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(l)) { out.push('<hr>'); i++; }
+    else if (/^\s*>/.test(l)) { const q = []; for (; i < ls.length && /^\s*>/.test(ls[i]); i++) q.push(ls[i].replace(/^\s*>\s?/, '')); out.push(`<blockquote>${md(q.join('\n'))}</blockquote>`); }
+    else if ((m = LIST.exec(l))) {
+      const ol = /\d/.test(m[2]), items = [];
+      for (; i < ls.length && (m = LIST.exec(ls[i]) || (ls[i].trim() && /^\s{2,}/.test(ls[i]) && items.length && [null, '', '', ls[i].trim()])); i++) {
+        if (m[2]) items.push([m[1].length >= 2, m[3]]); else items[items.length - 1][1] += ' ' + m[3];
+      }
+      out.push(`<${ol ? 'ol' : 'ul'}>${items.map(([sub, t]) => `<li${sub ? ' class="sub"' : ''}>${inl(t)}</li>`).join('')}</${ol ? 'ol' : 'ul'}>`);
+    } else if (!l.trim()) i++;
+    else { const p = []; for (; i < ls.length && ls[i].trim() && (!p.length || !BLOCK.test(ls[i])); i++) p.push(ls[i].trim()); out.push(`<p>${inl(p.join(' '))}</p>`); }
+  }
+  return out.join('');
+}
+
+// The first plain paragraph (a quoted note only if there is nothing else), for the 3-line preview.
+function firstPara(src) {
+  const blocks = src.split(/\n\s*\n/).map((x) => x.trim()).filter((x) => x && !/^(#|```|~~~|[-*_]{3})/.test(x));
+  const b = blocks.find((x) => !x.startsWith('>')) || blocks[0] || '';
+  return b.split('\n').map((x) => x.replace(/^\s*>\s?/, '').trim()).join(' ');
+}
+
+const MERMAID = 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+let mermaidP = null;
+// Draw each mermaid block once (cached per review in R.mmd); a failure leaves the code block.
+function drawMermaid() {
+  for (const el of panel.querySelectorAll('.rv-mmd')) {
+    const k = +el.dataset.k, cache = R.mmd;
+    if (cache.get(k)) { el.innerHTML = cache.get(k); continue; }
+    if (cache.has(k)) continue;   // drawing, or failed
+    cache.set(k, null);
+    mermaidP ||= import(MERMAID).then(({ default: mm }) => {
+      mm.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'base', fontFamily: 'Inter, system-ui, sans-serif',
+        themeVariables: { darkMode: true, background: 'transparent', primaryColor: '#1a1e27', primaryBorderColor: '#5b6272', primaryTextColor: '#f5f7fa', secondaryColor: '#1a1e27',
+          tertiaryColor: '#14171e', lineColor: '#8b93a3', textColor: '#c9ced8', edgeLabelBackground: '#14171e', clusterBkg: '#14171e', clusterBorder: '#343a46', fontSize: '13px' } });
+      return mm;
+    });
+    const id = `rvmmd${k}x${Date.now()}`;
+    mermaidP.then((mm) => mm.render(id, R.mmdSrc[k])).then(({ svg }) => {
+      cache.set(k, svg);
+      const at = R.mmd === cache && panel.querySelector(`.rv-mmd[data-k="${k}"]`); if (at) at.innerHTML = svg;
+    }, () => { cache.set(k, ''); document.getElementById('d' + id)?.remove(); });
+  }
+}
+
+function about(d) {
+  // (comments out, and a leading "Description"-style heading: the section already says so)
+  const body = (d.pr?.body || '').replace(/\r/g, '').replace(/<!--[\s\S]*?-->/g, '').trim().replace(/^#+\s*(description|summary|overview|about)\s*#*\n/i, ''), first = body && firstPara(body);
+  const text = !body ? '' : R.more ? `<div class="rv-md">${R.md ||= md(body)}</div><button class="rv-more" data-rv="less">Less</button>`
+    : `<div class="rv-md rv-pre">${inl(first)}</div>${body.length > first.length + 4 ? '<button class="rv-more" data-rv="more">More</button>' : ''}`;
+  const narr = d.functions.length || d.files.length ? `<button class="rv-more rv-narrbtn" data-rv="narr" ${R.narrBusy ? 'disabled' : ''}>${R.narrBusy ? '<span class="spin"></span>Summarizing…' : I.spark + (R.narr ? 'Summarize again' : 'Summarize the change')}</button>` : '';
+  return `${text}${R.narrNote ? `<div class="rv-note">${R.narrNote}</div>` : ''}${narrative()}${narr ? `<div class="rv-abt-acts">${narr}</div>` : ''}`;
+}
 
 // A state machine the change's queries implement, as a small left-to-right diagram: states by distance from the start,
-// each arrow is the query that moves a row along (hover: its name, click: its code).
+// each arrow is the query that moves a row along. Hover names it and its callers; a click shows them below to open.
 function lifecycles(list) {
-  return (list || []).map((m) => {
+  return (list || []).map((m, mi) => {
     const rank = new Map([[m.start ?? m.transitions[0]?.from, 0]]);
     for (let k = 0; k < m.states.length; k++) for (const t of m.transitions) if (rank.has(t.from) && !rank.has(t.to)) rank.set(t.to, rank.get(t.from) + 1);
     for (const st of m.states) if (!rank.has(st)) rank.set(st, 0);
@@ -300,36 +435,40 @@ function lifecycles(list) {
     cols.forEach((c, r) => c.forEach((st, i) => pos.set(st, [X(r), 4 + (height - c.length * H) / 2 + i * H])));
     const out = new Set(m.transitions.map((t) => t.from));
     const tone = (st) => (/fail|error|cancel|reject/i.test(st) ? 'bad' : /succe|done|complete|ok/i.test(st) ? 'good' : st === m.start ? 'start' : '');
-    const edges = m.transitions.filter((t) => pos.has(t.from) && pos.has(t.to)).map((t) => {
-      const [x1, y1] = pos.get(t.from), [x2, y2] = pos.get(t.to), a = x1 + 84, b = x2;
-      return `<path class="rv-le" data-ref="${esc(t.ref)}" d="M${a} ${y1 + 13}C${a + 12} ${y1 + 13} ${b - 12} ${y2 + 13} ${b - 3} ${y2 + 13}" marker-end="url(#rvArrow)"><title>${esc(t.via)}: open its code</title></path>`;
+    const edges = m.transitions.map((t, ti) => {
+      if (!pos.has(t.from) || !pos.has(t.to)) return '';
+      const [x1, y1] = pos.get(t.from), [x2, y2] = pos.get(t.to), a = x1 + 84, b = x2, by = names(t.by || []);
+      return `<path class="rv-le${R.edge === `${mi}:${ti}` ? ' on' : ''}" data-edge="${mi}:${ti}" d="M${a} ${y1 + 13}C${a + 12} ${y1 + 13} ${b - 12} ${y2 + 13} ${b - 3} ${y2 + 13}" marker-end="url(#rvArrow)"><title>${esc(t.via)}${by.length ? `, called by ${esc(by.join(', '))}` : ''}</title></path>`;
     }).join('');
     const nodes = [...pos].map(([st, [x, y]]) => `<g class="rv-ls ${tone(st)}${out.has(st) ? '' : ' end'}"><rect x="${x}" y="${y}" width="84" height="26" rx="13"/><text x="${x + 42}" y="${y + 17}">${esc(st)}</text></g>`).join('');
-    return `<details class="rv-sec" open><summary>Lifecycle <span class="mono">${esc(m.table)}.${esc(m.field)}</span></summary>
-      <svg class="rv-life" viewBox="0 0 ${X(cols.length - 1) + 92} ${height}" width="${X(cols.length - 1) + 92}" height="${height}"><defs><marker id="rvArrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L8 4L0 8z"/></marker></defs>${edges}${nodes}</svg></details>`;
+    const [ei, ti] = (R.edge || '').split(':').map(Number), t = ei === mi && m.transitions[ti];
+    const cap = t ? `<div class="rv-lcap"><b>${esc(t.from)} → ${esc(t.to)}</b> by <button class="rv-ref" data-ref="${esc(t.ref)}">${esc(t.via)}</button>${(t.by || []).length ? `, called by ${t.by.map((id) => `<button class="rv-ref" data-fn="${esc(id)}">${esc(names([id])[0])}</button>`).join('')}` : ''}</div>` : '';
+    return `<div class="rv-lc"><div class="rv-cap mono">${esc(m.table)}.${esc(m.field)}</div>
+      <svg class="rv-life" viewBox="0 0 ${X(cols.length - 1) + 92} ${height}" width="${X(cols.length - 1) + 92}" height="${height}"><defs><marker id="rvArrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L8 4L0 8z"/></marker></defs>${edges}${nodes}</svg>${cap}</div>`;
   }).join('');
 }
 
 // Tables, enums, columns and indexes the change adds or drops (from its migrations).
 function schema(list) {
-  if (!list?.length) return '';
-  return `<details class="rv-sec"${list.length <= 4 ? ' open' : ''}><summary>Data model <em>${list.length}</em></summary>${list.map((x) =>
-    `<button class="rv-schema ${esc(x.op)}" data-ref="${esc(x.ref)}" title="${esc(x.ref)}"><span class="k">${x.op === 'removed' ? '−' : '+'} ${esc(x.kind)}</span><b class="mono">${esc(x.name)}</b>${x.detail.length ? `<small>${esc(x.detail.join(' · '))}</small>` : ''}</button>`).join('')}</details>`;
+  return (list || []).map((x) => `<button class="rv-schema ${esc(x.op)}" data-ref="${esc(x.ref)}" title="${esc(x.ref)}"><span class="k">${x.op === 'removed' ? '−' : '+'} ${esc(x.kind)}</span><b class="mono">${esc(x.name)}</b>${x.detail.length ? `<small>${esc(x.detail.join(' · '))}</small>` : ''}</button>`).join('');
 }
 
-function rowHtml(f) {
-  const on = f.id === R.cur, done = R.done.has(f.id), e = f.blast.entries, callers = f.blast.callers;
-  return `<div class="rv-row${on ? ' cur' : ''}${done ? ' done' : ''}" data-id="${esc(f.id)}">
-    <label class="rv-ck" title="Reviewed (r)"><input type="checkbox"${done ? ' checked' : ''}><i></i></label>
-    <div class="rv-main"><div class="rv-nmrow">${dot(f.risk)}<button class="rv-nm" title="${esc(f.file)}${f.head ? ':' + f.head.start : ''}">${wrapName(f.name)}</button>${STATUS[f.status] ? `<span class="rv-st ${esc(f.status)}">${STATUS[f.status]}</span>` : ''}</div>
-    ${f.summary ? `<div class="rv-sum">${esc(f.summary)}</div>` : ''}<div class="rv-chips">${chips(f)}</div>
-    ${on && (e.length || callers.length) ? `<div class="rv-blast">${e.length ? `<span>${I.entry}${e.map((x) => esc(x.label)).join(', ')}</span>` : ''}${callers.length ? `<span>${I.inArrow}called by ${esc(callers.slice(0, 4).join(', '))}${callers.length > 4 ? ` +${callers.length - 4}` : ''}</span>` : ''}</div>` : ''}</div></div>`;
+const OP = { added: '+', removed: '−', changed: '~' };
+// Env keys by file (value muted), flags and env reads the code gained or lost, then deploy, config and dependency files.
+function config(d, files) {
+  const byFile = new Map();
+  for (const c of d.config || []) (byFile.get(c.file) || byFile.set(c.file, []).get(c.file)).push(c);
+  const keys = [...byFile].map(([file, cs]) => `${fileRow(d.files.find((f) => f.path === file) || { path: file }, I.env)}
+    ${cs.map((c) => `<div class="rv-kv ${esc(c.op)}"><i>${OP[c.op]}</i><b>${esc(c.key)}</b>${c.value != null ? `<small title="${esc(c.value)}">${esc(c.value)}</small>` : ''}</div>`).join('')}`).join('');
+  const gates = d.gates.map((g) => `<button class="rv-kv ${esc(g.op)}" data-ref="${esc(g.refs[0] || '')}" title="${esc(`${g.kind} ${g.op}: ${g.refs.join(', ')}`)}"><i>${OP[g.op] || '~'}</i><b>${esc(g.name)}</b><small>${g.kind === 'flag' ? 'flag' : 'read by the code'}</small></button>`).join('');
+  return keys + gates + files.filter((f) => !byFile.has(f.path)).map((f) => fileRow(f)).join('');
 }
 
 function render() {
   if (!panel || panel.hidden) return;
   const d = R.data;
-  const head = `<div class="rv-hd"><span class="tag">Review</span><button class="btn rv-pickbtn" data-rv="pick" title="Review another branch or pull request">${I.branch}${d ? 'Switch' : 'Pick branch'}</button><button class="icon-btn rv-x" data-rv="hide" title="Hide the panel (the review stays on)">${I.x}</button></div>`;
+  const view = d && !R.busy && d.functions.length ? `<div class="seg rv-view"><button data-rv="flow" class="${flowShown() ? 'on' : ''}" title="The new code as a flow">Flow</button><button data-rv="map" class="${flowShown() ? '' : 'on'}" title="The system map">Map</button></div>` : '';
+  const head = `<div class="rv-hd"><span class="tag">Review</span>${view}${d && !R.busy && d.functions.length ? `<button class="icon-btn" data-rv="tour" title="Play the review tour, in reading order">${I.play}</button>` : ''}<button class="icon-btn" data-rv="pick" title="Review another branch or pull request">${I.branch}</button><button class="icon-btn rv-x" data-rv="hide" title="Hide the panel (the review stays on)">${I.x}</button></div>`;
   if (R.busy) {
     const sel = R.busy !== 'load', what = sel ? `Loading ${esc(headLabel(R.busy.h))}…` : 'Loading the review…';
     panel.innerHTML = `${head}<div class="rv-busy"><div class="rv-prog"><i></i></div><b>${what}</b><span>Reading the diff and x-raying changed functions.</span>${sel ? '<button class="btn" data-rv="cancel">Cancel</button>' : ''}<div class="skel"><i></i><i></i><i></i></div></div>`;
@@ -344,32 +483,34 @@ function render() {
   const pr = d.pr ? `<a class="rv-title" href="${esc(d.pr.url)}" target="_blank" rel="noopener" title="Open on GitHub">${esc(d.pr.title)} <span>#${d.pr.number}</span></a>`
     : `<div class="rv-title">${esc(R.head ? headLabel(R.head) : 'Working copy')}</div>`;
   const revs = `<div class="rv-revs mono"><span title="${esc(d.base.rev)}">${esc(`${d.base.ref} ${d.base.short}`)}</span>${I.outArrow}<span title="${esc(d.head.rev)}">${esc(d.head.short)}${d.head.dirty ? ' + uncommitted' : ''}</span></div>`;
-  const stats = `<div class="rv-stats"><span><b>${s.files}</b> files</span><span><b>${fx.added + fx.removed + fx.modified}</b> functions${fx.added || fx.removed ? ` <em>(${[fx.added && `+${fx.added}`, fx.removed && `−${fx.removed}`].filter(Boolean).join(' ')})</em>` : ''}</span>
-    <span class="rv-sev">${['high', 'medium', 'low'].map((k) => `<span class="${k}" title="${k} severity changes">${dot(k)}${s[k] || 0}</span>`).join('')}</span>${total ? `<span class="rv-done" title="Reviewed (r marks the current one)">${done}/${total} ✓</span>` : ''}</div>`;
-  const gates = d.gates.length ? `<div class="rv-gates">${d.gates.map((g) => `<button class="rv-gate ${esc(g.op)}" data-ref="${esc(g.refs[0] || '')}" title="${esc(`${g.kind} ${g.op}: ${g.refs.join(', ')}`)}">${g.kind === 'flag' ? I.flag : I.env}<span>${g.op === 'added' ? '+' : g.op === 'removed' ? '−' : '~'} ${esc(g.name)}</span></button>`).join('')}</div>` : '';
-  const empty = !d.functions.length && !d.files.length;
-  const groups = empty ? [] : visible();
-  R.rows = groups.flatMap((g) => g.fns);
+  const stats = total + d.files.length === 0 ? '' : `<div class="rv-stats">${[plural(total, 'function'), fx.added && `${fx.added} new`, fx.modified && `${fx.modified} changed`, fx.removed && `${fx.removed} deleted`, plural(s.files, 'file')].filter(Boolean).map((x) => `<span>${x}</span>`).join(' · ')}${s.high ? ` · <button class="rv-hi" data-rv="high" title="Next high-risk change (])">${s.high} high risk</button>` : ''}</div>`;
+  const prog = total ? `<div class="rv-done" title="${done} of ${total} reviewed"><i style="width:${(100 * done / total).toFixed(1)}%"></i></div>` : '';
   if (!R.rows.some((f) => f.id === R.cur)) R.cur = R.rows[0]?.id || null;
-  const aside = d.files.filter((f) => f.generated || f.test);
-  const list = empty ? `<div class="rv-state">${I.info}<b>No changes against base</b><span>${esc(d.base.ref)} and this head have the same code.</span></div>`
-    : !groups.length ? `<div class="rv-state"><b>Nothing matches these filters</b><button class="btn" data-rv="clearf">Show all</button></div>`
-    : groups.map((g) => `<section class="rv-grp"><h4 data-part="${esc(g.id)}">${g.fns.length ? dot(g.fns[0].risk) : ''}<button title="Show on the map">${esc(partName(g.id))}</button><em>${g.fns.length || plural(g.files.length, 'file')}</em></h4>
-        ${g.fns.map(rowHtml).join('')}
-        ${g.files.map(fileRow).join('')}</section>`).join('') +
-      (aside.length ? `<details class="rv-aside"><summary>${plural(aside.length, 'generated or test file')}</summary>${aside.map(fileRow).join('')}</details>` : '');
+  const role = (f) => f.role || (f.test ? 'test' : f.generated ? 'generated' : R.analysed.has(f.path) ? 'code' : 'other');
+  const files = (...rs) => d.files.filter((f) => rs.includes(role(f)));
+  const changed = R.rows.filter((f) => !isNew(f)), fresh = R.rows.filter(isNew);
+  const deploy = files('deploy', 'config', 'deps'), tests = files('test'), gen = files('generated');
+  const others = files('code', 'docs', 'other').filter((f) => !R.analysed.has(f.path)), nCfg = (d.config || []).length + d.gates.length + deploy.length;
+  const covered = d.functions.some((f) => f.tests) ? d.functions.filter((f) => f.tests?.length).length : -1;
+  const body = !total && !d.files.length ? `<div class="rv-state">${I.info}<b>No changes against base</b><span>${esc(d.base.ref)} and this head have the same code.</span></div>`
+    : sec('about', 'About', '', about(d), true)
+      + sec('changed', 'Changes existing behaviour', changed.length, changed.map(rowHtml).join(''), true)
+      + sec('new', 'New code', fresh.length, fresh.map(rowHtml).join(''), true)
+      + sec('data', 'Data', (d.lifecycles?.length || 0) + (d.schema?.length || 0), lifecycles(d.lifecycles) + schema(d.schema))
+      + sec('config', 'Config & deploy', nCfg, nCfg ? config(d, deploy) : '')
+      + sec('other', 'Other files', others.length, others.map((f) => fileRow(f)).join(''))
+      + sec('tests', 'Tests & generated', [tests.length && plural(tests.length, 'test'), gen.length && `${gen.length} generated`].filter(Boolean).join(' · '),
+        tests.length + gen.length ? `${covered >= 0 ? `<div class="rv-cov">${covered} of ${total} functions are mentioned in tests</div>` : ''}${tests.map((f) => fileRow(f)).join('')}${gen.length ? `<div class="rv-cap">Generated</div>${gen.map((f) => fileRow(f)).join('')}` : ''}` : '');
   const keep = panel.querySelector('.rv-scroll')?.scrollTop || 0;
   panel.innerHTML = `${head}<div class="rv-scroll">
-    <div class="rv-pr">${pr}${revs}${stats}${gates}</div>
-    ${mapBanner()}
-    <div class="rv-acts">${total ? `<button class="btn primary" data-rv="tour">${I.play}Play review tour</button>` : ''}${empty ? '' : `<button class="btn tinted" data-rv="narr" ${R.narrBusy ? 'disabled' : ''}>${R.narrBusy ? '<span class="spin"></span>Summarizing…' : I.spark + (R.narr ? 'Summarize again' : 'Summarize')}</button>`}</div>
-    ${R.narrNote ? `<div class="rv-note">${R.narrNote}</div>` : ''}${narrative()}
-    ${lifecycles(d.lifecycles)}${schema(d.schema)}
-    <div class="rv-list">${total ? `<div class="rv-lh"><span>Changes</span><button data-f="hideLow" class="${R.f.hideLow ? 'on' : ''}" title="Show only medium and high risk">Hide low risk</button></div>` : ''}${list}</div></div>
-    ${total ? `<div class="rv-keys" title="Keys: j / k move · ↵ open · ] / [ next high risk · r mark reviewed"><span class="rv-step"><button data-rv="prev" title="Previous change">${I.chevL}</button><button data-rv="next" title="Next change">${I.chevR}</button></span><span>${R.rows.findIndex((f) => f.id === R.cur) + 1} of ${R.rows.length}</span></div>` : ''}`;
+    <div class="rv-pr">${pr}${revs}${stats}${prog}</div>
+    ${mapBanner()}${body}</div>
+    ${total ? `<div class="rv-keys" title="Keys: j / k move · ↵ open · ] / [ next high risk · r mark reviewed"><span class="rv-step"><button data-rv="prev" title="Previous (k)">${I.chevL}</button><button data-rv="next" title="Next (j)">${I.chevR}</button></span><span>${R.rows.findIndex((f) => f.id === R.cur) + 1} of ${R.rows.length}</span></div>` : ''}`;
   panel.querySelector('.rv-scroll').scrollTop = keep;
   if (R.shownCur !== undefined && R.shownCur !== R.cur) panel.querySelector('.rv-row.cur')?.scrollIntoView({ block: 'nearest' });   // only when the selection moves
   R.shownCur = R.cur;
+  if (R.more) drawMermaid();
+  if (flowShown()) setFlow({ cur: R.cur, done: R.done });
 }
 
 function narrative() {
@@ -393,6 +534,12 @@ function nextHigh(step) {
   R.cur = next.id; render(); openFn(next);
 }
 
+// Flow or map: the flow canvas over the map, or the map with the review's parts in focus.
+function setView(flow) {
+  if (flow) showFlow(R.data, { cur: R.cur, done: R.done }); else hideFlow();
+  render();
+}
+
 function toggleDone(id) {
   const f = fnById(id); if (!f) return;
   R.done.has(id) ? R.done.delete(id) : R.done.add(id);
@@ -407,10 +554,12 @@ function itemOf(f) {
   return c.find((x) => x.line >= f.head.start && x.line <= f.head.end) || c[0] || null;
 }
 
-// Fly to the function's part and open the Lens x-ray on it, the diff at the change (ci, else the first), linked.
-function openFn(f, ci = 0) {
+// Open the function's diff in the code drawer at the change (ci; new code: its start, changed code: its first change).
+// On the map it also flies to the function's part and opens the Lens x-ray on it, linked; the flow stays put.
+function openFn(f, ci = null) {
   R.cur = R.opened = f.id; render(); blast(null);
-  const c = f.changes[ci] || f.changes[0], it = f.status !== 'removed' && itemOf(f);
+  const c = ci == null && isNew(f) ? null : f.changes[ci ?? 0], it = f.status !== 'removed' && itemOf(f);
+  if (flowShown()) return openChangeLine(f.file, c ? c.head_line : f.head?.start, c ? c.base_line : f.base?.start);
   if (it) {
     const S = it.node.owner.struct;
     if (S.depth < 0.05) { const d = camPos.clone().sub(S.group.position); setFacing(S, Math.atan2(d.x, d.z)); }
@@ -483,7 +632,7 @@ function mapBanner() {
   }
   if (p?.error || m.error) return `<div class="rv-banner error">${I.info}<div><b>The map update failed.</b><div class="rv-err">${esc(p?.error || m.error)}</div><button class="btn" data-rv="remap">${I.replay}Try again</button></div></div>`;
   if (m.current) return '';
-  if (m.needs_model && !state.chatCfg?.picked) return `<div class="rv-banner slim">${I.info}<span>Pick a model to show this change on the map</span><button class="btn" data-rv="settings">Settings</button></div>`;
+  if (m.needs_model && !state.chatCfg?.picked) return `<div class="rv-banner slim">${I.info}<span>To map this change, <button class="lnk" data-rv="settings">pick a model</button></span></div>`;
   return `<div class="rv-banner slim" title="${m.parts_changed} of ${m.parts_total} parts differ from this version: their summaries and flows may not match the code.">${I.info}<span>The map is from another version</span>
     <button class="btn" data-rv="remap">${m.needs_model ? 'Update…' : 'Update (quick)'}</button></div>`;
 }
@@ -541,7 +690,7 @@ async function watchMap() {
 }
 
 /* ---------------- tour ---------------- */
-const tourList = () => R.data.tour.map(fnById).filter(Boolean);
+const tourList = () => R.order.map(fnById);
 
 function playTour() {
   const list = tourList(); if (!list.length) return;
@@ -633,9 +782,14 @@ function renderPicker() {
 export function initReview() {
   document.body.insertAdjacentHTML('beforeend', `<aside id="review" class="hud glass" aria-label="Review" hidden></aside>
     <div id="rvtour" class="hud glass" hidden></div><div id="rvpick" class="hud glass" role="dialog" aria-label="Pick a branch" hidden></div>
-    <div id="rvdlg" class="hud glass" role="dialog" aria-label="Confirm" hidden></div>`);
+    <div id="rvdlg" class="hud glass" role="dialog" aria-label="Confirm" hidden></div><div id="rvzoom" class="hud glass" title="Close (Esc)" hidden></div>`);
+  $('#rvzoom').onclick = () => { $('#rvzoom').hidden = true; };   // a description diagram, enlarged
   panel = $('#review'); tourBar = $('#rvtour');
-  try { Object.assign(R.f, JSON.parse(localStorage.getItem(FILTER_KEY) || '{}')); } catch { /* storage blocked */ }
+  initFlow({
+    onOpen: (id) => { const f = fnById(id); if (f) openFn(f); },
+    onMap: (id) => { const f = fnById(id); hideFlow(); if (f) openFn(f); else render(); },
+    onClose: () => render(),
+  });
   state.diffHtml = diffHtml;
   $('#dview').onclick = (e) => {
     const b = e.target.closest('[data-v]'); if (!b) return;
@@ -653,9 +807,11 @@ export function initReview() {
     if (a === 'pick') return openPicker();   // (no event argument: a click is not a refresh)
     if (a === 'hide') return hidePanel(true);
     if (a === 'cancel') { R.ctl?.abort(); R.ctl = null; R.busy = null; return render(); }
-    if (a === 'retry') return R.head ? selectHead(R.head, R.base) : loadReview();
+    if (a === 'retry') return R.want ? selectHead(...R.want) : loadReview();
     if (a === 'dismiss') { R.error = ''; return render(); }
-    if (a === 'clearf') { R.f.hideLow = false; return render(); }
+    if (a === 'flow' || a === 'map') return setView(a === 'flow');
+    if (a === 'more' || a === 'less') { R.more = a === 'more'; return render(); }
+    if (a === 'high') return nextHigh(1);
     if (a === 'tour') return playTour();
     if (a === 'narr') return summarize();
     if (a === 'settings') return openSettings();
@@ -664,16 +820,17 @@ export function initReview() {
       if (R.opened === R.cur) move(a === 'next' ? 1 : -1);
       return R.cur && openFn(fnById(R.cur));
     }
-    const fb = t.closest('[data-f]');
-    if (fb) { R.f[fb.dataset.f] = !R.f[fb.dataset.f]; try { localStorage.setItem(FILTER_KEY, JSON.stringify(R.f)); } catch { /* storage blocked */ } return render(); }
+    const edge = t.closest('[data-edge]'); if (edge) { R.edge = R.edge === edge.dataset.edge ? null : edge.dataset.edge; return render(); }
+    const fn = t.closest('[data-fn]'); if (fn) return openFn(fnById(fn.dataset.fn));
     const ref = t.closest('[data-ref]'); if (ref?.dataset.ref) return openCode(ref.dataset.ref);
     const file = t.closest('[data-file]'); if (file) return openFile(file.dataset.file, 0);
-    const ph = t.closest('[data-part]'); if (ph && parts.has(ph.dataset.part)) return flyToEnt({ type: 'part', id: ph.dataset.part });
+    if (t.closest('.rv-mmd svg')) { const z = $('#rvzoom'); z.innerHTML = t.closest('svg').outerHTML; z.hidden = false; return; }
     const row = t.closest('.rv-row'); if (!row) return;
     if (t.closest('.rv-ck')) { if (t.matches('input')) toggleDone(row.dataset.id); return; }
     const f = fnById(row.dataset.id), chip = t.closest('[data-ci]');
-    openFn(f, chip ? +chip.dataset.ci : 0);
+    openFn(f, chip ? +chip.dataset.ci : null);
   });
+  panel.addEventListener('toggle', (e) => { const k = e.target.dataset?.sec; if (k) R.open[k] = e.target.open; }, true);
   let hov = null;
   panel.addEventListener('mouseover', (e) => { const r = e.target.closest('.rv-row'); if (r?.dataset.id !== hov) { hov = r?.dataset.id || null; blast(hov && fnById(hov)); } });
   panel.addEventListener('mouseleave', () => { hov = null; blast(null); });
@@ -715,6 +872,7 @@ export function initReview() {
 
   // Review keys, in the capture phase so j/k move the list even while the x-ray has focus (its ↑/↓ still step).
   addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !$('#rvzoom').hidden) { $('#rvzoom').hidden = true; e.stopPropagation(); return; }
     if (!R.data || panel.hidden || R.busy || e.ctrlKey || e.metaKey || e.altKey || e.target.closest?.('input,textarea,select') || !$('#rvpick').hidden || !$('#rvdlg').hidden || !$('#settings').hidden) return;
     const k = e.key, inXray = !!e.target.closest?.('.xr-view');
     if (R.tour && !player.on && (k === 'ArrowRight' || k === 'ArrowLeft' || k === 'Escape' || k === ' ')) {
@@ -733,7 +891,7 @@ export function initReview() {
   // A camera saved before a re-map reload comes back.
   try {
     const cam = JSON.parse(sessionStorage.getItem(CAM_KEY) || 'null');
-    if (cam) { sessionStorage.removeItem(CAM_KEY); fly.on = false; controls.target.fromArray(cam.t); camPos.fromArray(cam.p); state.redraw = true; }
+    if (cam) { sessionStorage.removeItem(CAM_KEY); R.camKept = true; fly.on = false; controls.target.fromArray(cam.t); camPos.fromArray(cam.p); state.redraw = true; }
   } catch { /* storage blocked */ }
 
   // #review loads the server's review, #review=pr:123 / #review=branch:name a chosen one; a review already loaded opens too.

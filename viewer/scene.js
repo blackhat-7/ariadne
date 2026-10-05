@@ -608,7 +608,9 @@ function set(o, k, v) {
   o[k] = v; state.redraw = true; return true;
 }
 
+// null falls back to the resting focus (state.restEmph: a review's parts, review.js), else the whole map.
 export function setEmphasis(ids, linkFilter) {
+  ids ||= state.restEmph;
   if (!ids) { state.emph = state.emphLinks = null; return; }
   state.emph = new Set(ids);
   state.emphLinks = new Set(state.M._links.filter(linkFilter || ((L) => state.emph.has(L.a.id) && state.emph.has(L.b.id))));

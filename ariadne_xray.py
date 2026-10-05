@@ -491,7 +491,8 @@ class Walk:
 
     # ---- calls ----
 
-    def callee(self, n):
+    @staticmethod
+    def callee(n):
         """(callee name, receiver text) of a call or constructor."""
         name = n.child_by_field_name("name") or n.child_by_field_name("method")
         if name is not None and n.type not in NEWS:

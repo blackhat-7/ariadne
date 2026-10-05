@@ -15,7 +15,8 @@ Everything except the optional narrative is deterministic: syntax trees (`ariadn
   "head": { "rev": "…", "short": "…", "dirty": true },
   "pr": { "number": 123, "title": "…", "body": "…", "url": "…" } | null,
   "files": [ { "path": "src/checkout/main.go", "status": "modified" | "added" | "deleted" | "renamed", "old": "…" | null,
-               "part": "checkout" | null, "added": 12, "removed": 3, "generated": false, "test": false } ],
+               "part": "checkout" | null, "added": 12, "removed": 3, "generated": false, "test": false,
+               "role": "code" | "test" | "generated" | "config" | "deploy" | "deps" | "docs" | "other" } ],
   "functions": [ {
       "id": "src/checkout/main.go::PlaceOrder",
       "name": "PlaceOrder", "parent": "checkout" | null, "file": "src/checkout/main.go", "part": "checkout",
@@ -32,22 +33,45 @@ Everything except the optional narrative is deterministic: syntax trees (`ariadn
       } ],
       "risk": "high" | "medium" | "low" | "none",                             // max severity
       "blast": { "entries": [ { "part": "checkout", "line": "L0", "label": "CheckoutService.PlaceOrder (gRPC)" } ],
-                 "callers": [ "main" ] }
+                 "callers": [ "main" ] },
+      "summary": "Places the order and charges the card." | null,           // doc comment or docstring, ≤ 2 sentences
+      "calls": [ { "to": "src/checkout/pay.go::Charge", "line": 340,          // reviewed functions it calls, in order
+                   "when": "not: cart.empty · total > 0" | null,              // branches and guard clauses around the call
+                   "loop": "for _, item := range items" | null } ],
+      "effects": [ { "kind": "db" | "queue" | "storage" | "payment" | "cloud" | "saas" | "network" | "outside",
+                     "target": "orders", "op": "reads" | "writes" | "calls", "line": 344 | null } ],
+      "tests": [ "src/checkout/main_test.go" ]                                // test files in the PR naming it
   } ],
   "gates": [ { "id": "env:KAFKA_ADDR", "name": "KAFKA_ADDR", "kind": "env" | "flag", "op": "added" | "removed" | "changed",
                "refs": [ "src/checkout/main.go:418" ] } ],
   "parts": [ { "id": "checkout", "risk": "high", "functions": [ "src/checkout/main.go::PlaceOrder" ], "lines": [ "L0", "L2" ] } ],
   "stats": { "files": 4, "functions": { "added": 1, "removed": 0, "modified": 3 }, "high": 2, "medium": 3, "low": 5 },
-  "tour": [ "src/checkout/main.go::PlaceOrder", "…" ]   // changed functions in call order from the entry points, then the rest
+  "flow": { "roots": [ "src/checkout/main.go::main" ], "order": [ "src/checkout/main.go::main", "…" ] },
+  "tour": [ "…" ],                                         // = flow.order
+  "config": [ { "file": "deploy/app.env", "key": "API_TOKEN", "op": "added" | "removed" | "changed", "value": "•••" | null } ]
 }
 ```
 
 SQL (`.sql` files): each sqlc named query (`-- name: X :kind`) is a function with `"kind": "query"` and its comment as
 `"summary"`; its changes say what it reads or writes and its literal guards (`WHERE job_state = 'scheduled'`); a
 removed guard is high. Migrations (other `.sql`, not `*.down.sql`) give `"schema": [{kind: table|enum|index|column,
-op, name, detail: [...], ref}]`. `"lifecycles": [{table, field, states, start, transitions: [{from, to, via, ref}]}]`
+op, name, detail: [...], ref}]`. `"lifecycles": [{table, field, states, start, transitions: [{from, to, via, ref, by}]}]`
 come from `UPDATE … SET col = 'to' … WHERE col = 'from'` on state-like or enum columns; a new row starts at the
 column's default. Generated files (`generated/` folders, "Code generated … DO NOT EDIT" headers) are listed, not reviewed.
+
+The new flow (all from the head's syntax trees; the base's for removed functions):
+- `calls`: every call in the function (its unnamed closures included) whose last name is a reviewed function or query.
+  A name several reviewed functions share means the one in the caller's folder, else nothing; a name the caller's own
+  file defines stays in that file; other files are reached only in the same language, a plain function bare or through
+  its module or package (`pkg.Fn`, any Go package), a method through an object; common names (`add`, `get`) never
+  cross files. `when` is the two innermost of: enclosing if/else (`not: x`, comparisons flipped), case (`subject: label`),
+  catch (`on error`), and earlier guard clauses (`if x { return }` → `not: x`; error checks left out); clipped to 60.
+- `effects`: a query's tables (the first of an INSERT/UPDATE/DELETE written, the rest read); code's x-ray effects,
+  `op` from the callee's verb.
+- `flow.roots`: functions no reviewed function calls, entry points first (main, `cmd/`, handlers, exported), then by
+  how much they reach; `flow.order` is a depth-first walk of `calls` from them, then the rest by file and line.
+- `lifecycles[].transitions[].by`: the reviewed functions calling the transition's query.
+- `config`: keys of env files (`.env`, `*.env`); keys naming a secret, token, password, key, credential or DSN show `•••`.
 
 Severity rules (deterministic):
 - high: error check removed or condition of an error check changed/inverted; error return/throw removed; condition

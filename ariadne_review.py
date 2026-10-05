@@ -15,8 +15,9 @@ from pathlib import Path
 
 from ariadne import EXTERNAL_KINDS, GENERATED, TESTS, guess_kind
 from ariadne_gates import gates as find_gates
-from ariadne_xray import LANGS, Walk, body_of, clip, function_name, functions as find_functions, \
-    get_parser, words
+from ariadne_xray import CASES, CATCHES, CALLS, CLOSURES, ELSE_IFS, FUNCS, IFS, ITERATORS, LANGS, LOOPS, NOISE_WORDS, \
+    PROTOCOL, RETURNS, SWITCHES, THROWS, Walk, assigned_name, body_of, clip, function_name, \
+    functions as find_functions, get_parser, text, unparen, words
 
 RISKS = ["none", "low", "medium", "high"]
 RANK = {r: i for i, r in enumerate(RISKS)}
@@ -269,7 +270,7 @@ def review(repo, base=None, head=None, *, part_of, known_functions, effect_targe
     repo = Path(repo)
     base_sha, ref, head_sha = revs(repo, base, head)
     entries = changed(repo, base_sha, head_sha)
-    files, todo, sql = [], [], []
+    files, todo, sql, envs = [], [], [], []
     for status, path, old, added, removed in entries:
         gen, test = bool(GENERATED.search(path)), bool(TESTS.search(path))
         files.append({"path": path, "status": status, "old": old, "part": part_of(path), "added": added,
@@ -278,6 +279,8 @@ def review(repo, base=None, head=None, *, part_of, known_functions, effect_targe
             todo.append((status, path, old or path))
         elif not gen and not test and path.endswith(".sql"):
             sql.append((status, path, old or path))
+        elif ENV_FILE.search(path):
+            envs.append((status, path, old or path))
 
     base_blobs = blob_shas(repo, base_sha, [o for s, _, o in todo if s != "added"])
     head_text = {}
@@ -331,6 +334,17 @@ def review(repo, base=None, head=None, *, part_of, known_functions, effect_targe
         f["risk"] = RISKS[top]
 
     sql_out = sql_review(repo, base_sha, head_sha, sql, fns, part_of)   # named queries join fns
+    called = connect(fns, local)
+    for m in sql_out["lifecycles"]:
+        for t in m["transitions"]:
+            t["by"] = [f["id"] for f in fns if t["via"] in called[f["id"]]]
+    tests = {p: set(re.findall(r"[A-Za-z_]\w*", t)) for p, t in texts(repo, head_sha, [
+        f["path"] for f in files if f["test"] and f["status"] != "deleted"]).items()}
+    for f in fns:
+        f["tests"] = [p for p, names in tests.items() if f["name"] in names]
+    for f in files:
+        f["role"] = role(f)
+    order = flow(fns)
     parts = {}
     for f in fns:
         if f["part"] is not None:
@@ -353,7 +367,9 @@ def review(repo, base=None, head=None, *, part_of, known_functions, effect_targe
         "stats": {"files": len(files),
                   "functions": {s: sum(f["status"] == s for f in fns) for s in ("added", "removed", "modified")},
                   **{s: severities.count(s) for s in ("high", "medium", "low")}},
-        "tour": tour(fns),
+        "flow": order,
+        "tour": order["order"],
+        "config": config_changes(repo, base_sha, head_sha, envs),
         **sql_out,
     }
 
@@ -365,27 +381,153 @@ def read_file(path):
         return None
 
 
-def tour(fns):
-    """Changed functions in call order from the ones on metro lines (entry routes), then the rest by risk."""
-    order, seen = [], set()
-
-    def visit(f):
-        if f["id"] in seen:
-            return
-        seen.add(f["id"])
-        order.append(f["id"])
-        for g in sorted((g for g in fns if f["name"] in g["blast"]["callers"]), key=line_of):
-            visit(g)
-
-    for f in sorted((f for f in fns if f["blast"]["entries"]), key=lambda f: (-RANK[f["risk"]], *line_of(f))):
-        visit(f)
-    for f in sorted(fns, key=lambda f: (-RANK[f["risk"]], *line_of(f))):
-        visit(f)
-    return order
-
-
 def line_of(f):
     return f["file"], (f["head"] or f["base"])["start"]
+
+
+def connect(fns, local):
+    """Each function's call sites become "calls" to the reviewed functions they name (a name shared by several:
+    the one in the caller's folder, else none); local: {file: names of its functions}. Returns {id: every name it
+    calls}, reviewed or not."""
+    by_name, names = {}, {}
+    for f in fns:
+        by_name.setdefault(f["name"], []).append(f)
+    for f in fns:
+        sites, f["calls"] = f.pop("sites"), []
+        names[f["id"]] = {s[0] for s in sites}
+        folder = os.path.dirname(f["file"])
+        for name, recv, line, when, loop in sites:
+            found = [g for g in by_name.get(name, []) if g is not f and reaches(name, recv, f, g, local)]
+            if len(found) > 1:
+                found = [g for g in found if os.path.dirname(g["file"]) == folder]
+            if len(found) == 1:
+                f["calls"].append({"to": found[0]["id"], "line": line, "when": when, "loop": loop})
+        # a condition every call shares is the function's precondition, not a branch between its calls
+        common = set.intersection(*(set(c["when"]) for c in f["calls"])) if len(f["calls"]) > 1 else set()
+        for c in f["calls"]:
+            c["when"] = short(" · ".join(reversed([w for w in c["when"] if w not in common][:2]))) or None
+    return names
+
+
+def reaches(name, recv, f, g, local):
+    """Whether f calling name through receiver recv ("" for a bare call) can mean g: a query through any store; in
+    the same language, and not a name f's own file defines, a method through an object (bare or self: its own file)
+    and a plain function bare or through its module or package (pkg.Fn, not re.match). Common names (add, get) never
+    reach another file."""
+    if g.get("kind") == "query":
+        return True
+    if g["file"] == f["file"]:
+        return True
+    if family(g["file"]) != family(f["file"]) or name in local.get(f["file"], ()) or name in COMMON:
+        return False
+    if g["parent"]:
+        return recv not in ("", "self", "this", "cls")
+    # a Go function is reached only through its package, whatever the import calls it
+    return not recv or family(g["file"]) == "go" or recv in (Path(g["file"]).stem, Path(g["file"]).parent.name)
+
+
+def family(path):
+    lang = LANGS.get(Path(path).suffix.lower())
+    return {"typescript": "javascript", "tsx": "javascript", "c": "cpp"}.get(lang, lang)
+
+
+def flow(fns):
+    """{roots, order}: roots are the functions no reviewed function calls, entry points first (main, cmd/, handlers,
+    exported), then the ones reaching most; order walks the calls depth-first from them, then the rest by place."""
+    by_id = {f["id"]: f for f in fns}
+    called = {c["to"] for f in fns for c in f["calls"]}
+
+    def reach(fid, seen):
+        if fid not in seen:
+            seen.add(fid)
+            for c in by_id[fid]["calls"]:
+                reach(c["to"], seen)
+        return seen
+
+    def entry(f):
+        name, go = f["name"], f["file"].endswith(".go")
+        if f.get("kind") == "query":
+            return 3
+        if name == "main" or "/cmd/" in "/" + f["file"] or re.match(r"(?i)handle|serve", name) \
+                or "(" in name and not name.startswith("(closure"):
+            return 0
+        return 2 if name.startswith("_") or go and not name[:1].isupper() else 1
+
+    roots = sorted((f for f in fns if f["id"] not in called),
+                   key=lambda f: (entry(f), -len(reach(f["id"], set())), *line_of(f)))
+    order, seen = [], set()
+    for f in roots + sorted(fns, key=line_of):
+        order += preorder(f["id"], by_id, seen)
+    return {"roots": [f["id"] for f in roots], "order": order}
+
+
+def preorder(fid, by_id, seen):
+    """Ids reached from fid along calls in source order, depth first, skipping seen ones."""
+    out, todo = [], [fid]
+    while todo:
+        fid = todo.pop()
+        if fid not in seen:
+            seen.add(fid)
+            out.append(fid)
+            todo += reversed([c["to"] for c in by_id[fid]["calls"]])
+    return out
+
+
+def texts(repo, rev, paths):
+    """{path: text} of paths at rev (None: the working tree), in one git process."""
+    if rev is None:
+        return {p: d.decode("utf-8", "replace") for p in paths if (d := read_file(Path(repo) / p)) is not None}
+    shas = blob_shas(repo, rev, paths)
+    blobs = read_blobs(repo, shas.values())
+    return {p: blobs[s].decode("utf-8", "replace") for p, s in shas.items() if s in blobs}
+
+
+ENV_FILE = re.compile(r"(^|/)\.env(\.[\w.-]+)?$|\.env$")
+ENV_LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_]\w*)\s*=\s*(.*?)\s*$", re.M)
+SECRET = re.compile(r"SECRET|TOKEN|PASSWORD|PASSWD|KEY|CREDENTIAL|DSN", re.I)
+
+
+def config_changes(repo, base_sha, head_sha, envs):
+    """Keys added, removed or changed in env files (KEY=VALUE); secret-looking values are hidden."""
+    before = texts(repo, base_sha, [o for s, _, o in envs if s != "added"])
+    after = texts(repo, head_sha, [p for s, p, _ in envs if s != "deleted"])
+    out = []
+    for status, path, old in envs:
+        b = dict(ENV_LINE.findall(before.get(old, ""))) if status != "added" else {}
+        h = dict(ENV_LINE.findall(after.get(path, ""))) if status != "deleted" else {}
+        for k in dict.fromkeys([*h, *b]):
+            if b.get(k) == h.get(k):
+                continue
+            op = "added" if k not in b else "removed" if k not in h else "changed"
+            value = h.get(k, b.get(k)).strip("'\"")
+            out.append({"file": path, "key": k, "op": op, "value": "•••" if SECRET.search(k) and value else clip(value)})
+    return out
+
+
+DEPLOY = re.compile(r"(^|/)(Dockerfile[^/]*|[^/]*\.dockerfile|docker-compose[^/]*|compose\.ya?ml|cloudbuild[^/]*|"
+                    r"Procfile|Jenkinsfile|skaffold[^/]*|fly\.toml|app\.ya?ml|serverless\.ya?ml|\.gitlab-ci\.yml|"
+                    r"[^/]*\.tf|[^/]*\.tfvars)$|(^|/)(\.github/workflows|k8s|kubernetes|helm|charts|deploy|terraform)/")
+DEPS = re.compile(r"(^|/)(go\.(mod|sum|work)|package(-lock)?\.json|yarn\.lock|pnpm-lock\.yaml|requirements[^/]*\.txt|"
+                  r"pyproject\.toml|uv\.lock|poetry\.lock|Pipfile(\.lock)?|Cargo\.(toml|lock)|Gemfile(\.lock)?|"
+                  r"pom\.xml|build\.gradle(\.kts)?|composer\.(json|lock))$")
+DOCS = re.compile(r"\.(md|mdx|rst|adoc|txt)$|(^|/)(docs?/|LICENSE|CHANGELOG)", re.I)
+WEB = {".sql", ".css", ".scss", ".sass", ".less", ".html", ".vue", ".svelte"}
+CONFIG = re.compile(r"\.(ya?ml|json|toml|ini|cfg|conf|properties|env)$|(^|/)\.env")
+
+
+def role(f):
+    """code | test | generated | config | deploy | deps | docs | other, from the file's path."""
+    p = f["path"]
+    if f["generated"]:
+        return "generated"
+    if f["test"]:
+        return "test"
+    for name, rx in (("deploy", DEPLOY), ("deps", DEPS), ("docs", DOCS)):
+        if rx.search(p):
+            return name
+    if Path(p).suffix.lower() in LANGS or Path(p).suffix.lower() in WEB:
+        return "code"
+    return "config" if CONFIG.search(p) else "other"
 
 
 def merge_gates(parts):
@@ -462,6 +604,14 @@ def sql_facts(code):
     sets = dict(re.findall(r"(\w+)\s*=\s*" + SQL_LIT, code[up.find(" SET ") + 5:].split(" WHERE ")[0])) if " SET " in up else {}
     return {"verb": verb, "tables": list(dict.fromkeys(t for t in tables if not t.lower().startswith("sqlc"))),
             "guards": guards, "sets": sets, "conflict": bool(re.search(r"ON\s+CONFLICT.*DO\s+NOTHING", code, re.I))}
+
+
+def query_effects(u):
+    """The tables a query writes (the first one of INSERT/UPDATE/DELETE) and reads."""
+    f = sql_facts(u["code"])
+    write = f["verb"] in ("INSERT", "UPDATE", "DELETE")
+    return [{"kind": "db", "target": t, "op": "writes" if write and i == 0 else "reads", "line": u["start"]}
+            for i, t in enumerate(f["tables"])]
 
 
 def query_changes(b, h):
@@ -562,9 +712,10 @@ def sql_review(repo, base_sha, head_sha, sql, fns, part_of):
                 changes = query_changes(bu, hu)
                 top = max((RANK[c["severity"]] for c in changes), default=1)
                 fns.append({"id": f"{path}::{name}", "name": name, "parent": None, "file": path, "kind": "query",
-                            "status": "modified" if bu and hu else "added" if hu else "removed", "summary": (hu or bu)["doc"],
+                            "status": "modified" if bu and hu else "added" if hu else "removed", "summary": sentences((hu or bu)["doc"], name),
                             "base": bu and {"start": bu["start"], "end": bu["end"]}, "head": hu and {"start": hu["start"], "end": hu["end"]},
-                            "changes": changes, "risk": RISKS[max(top, 1)], "part": part_of(path),
+                            "changes": changes, "risk": RISKS[max(top, 1)], "part": part_of(path), "sites": [],
+                            "effects": query_effects(hu or bu),
                             "blast": {"entries": [], "callers": []}})
                 if hu:
                     units.append(dict(hu, ref=f"{path}:{hu['start']}"))
@@ -599,18 +750,21 @@ def analyse(rel, base_src, head_src, known, targets):
         status = "modified" if b and h else "added" if h else "removed"
         f = b or h
         ident = f"{f['parent']}.{f['name']}" if f["name"] in shared and f["parent"] else f["name"]
+        own = h or b   # what the function is now; a removed one as it was
         fn = {"id": f"{rel}::{ident}", "name": f["name"], "parent": f["parent"], "file": rel, "status": status,
-              "base": span(b), "head": span(h), "changes": []}
+              "base": span(b), "head": span(h), "changes": [], "summary": summary(own["node"], f["name"]),
+              "sites": call_sites(own["node"])}
         if status == "modified":
             bx = Walk(lang, b["node"], set(known), base_targets).run(rel)
-            hx = Walk(lang, h["node"], set(known), targets).run(rel)
-            fn["changes"] = node_changes(flatten(bx), flatten(hx)) + literal_changes(b, h)
+            x = Walk(lang, h["node"], set(known), targets).run(rel)
+            fn["changes"] = node_changes(flatten(bx), flatten(x)) + literal_changes(b, h)
             if b["sig"] != h["sig"]:
-                fn["changes"].append(change("signature", "changed", entry_text(bx), entry_text(hx), b["start"],
+                fn["changes"].append(change("signature", "changed", entry_text(bx), entry_text(x), b["start"],
                                             h["start"], "medium", "Signature changed"))
         else:
             x = Walk(lang, f["node"], set(known), targets if h else base_targets).run(rel)
             fn["changes"] = node_changes(*((flatten(x), []) if b else ([], flatten(x))), effects_only=True)
+        fn["effects"] = code_effects(x)
         out.append(fn)
     seen = set()
     for fn in out:  # functions with the same id in both versions but unmatched: keep ids unique
@@ -723,6 +877,168 @@ def map_lines(head_src, base_src, targets):
 
 def entry_text(x):
     return next((n["text"] for n in x.get("nodes", []) if n["kind"] == "entry"), None)
+
+
+# ---------------------------------------------------------------- what a function is for, calls and touches
+
+WRAPPERS = {"decorated_definition", "export_statement", "lexical_declaration", "expression_statement",
+            "var_declaration", "const_declaration", "variable_declarator", "variable_declaration", "assignment",
+            "assignment_expression", "short_var_declaration", "var_spec", "const_spec", "pair", "field_definition",
+            "public_field_definition", "property_declaration"}   # a function's doc comment sits above these
+DIRECTIVE = re.compile(r"^(go:|nolint|eslint|prettier|type:|noqa|pylint|@ts-|!|-\*-|#?region|#?endregion|TODO|FIXME|"
+                       r"[-=*~_#/]{3})")   # tool directives and section dividers
+DOC_END = re.compile(r"^(@\w|:param|:return|(Args|Arguments|Returns|Raises|Parameters|Example)s?:)")
+SENTENCE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9`\"'(])")
+WRITE_VERB = re.compile(r"^(exec|insert|update|delete|save|put|set|create|upsert|publish|produce|send|write|push|"
+                        r"remove|mark|enqueue|post|patch)", re.I)
+READ_VERB = re.compile(r"^(get|query|select|find|fetch|read|list|count|scan|load|exists|lookup|search)", re.I)
+MAX_GUARD = 60
+COMMON = {"add", "get", "set", "put", "append", "update", "remove", "pop", "push", "keys", "values", "items", "map",
+          "filter", "find", "join", "split", "run", "start", "stop", "close", "open", "read", "write", "send", "call",
+          "apply", "bind", "next", "emit", "on", "off", "has", "delete", "clear", "copy", "sort", "format", "parse",
+          "load", "dump", "init", "reset", "render", "build", "create", "list", "count", "index", "match", "test",
+          "replace", "search", "insert", "extend", "len", "range", "print", "max", "min", "sum", "all", "any", "main",
+          "new", "New", "Get", "Set", "Run", "Start", "Stop", "String", "Error", "Add", "Do", "Send", "Init", "Load"}
+JUMPS = RETURNS | THROWS | {"continue_statement", "break_statement", "continue", "break"}
+COMPARE = re.compile(r"\s(not in|is not|in|is)\s|(!==|===|!=|==|<=|>=|<(?![-=<])|(?<![-=>])>(?!=))")
+FLIP = {"not in": "in", "in": "not in", "is not": "is", "is": "is not", "!==": "===", "===": "!==", "!=": "==",
+        "==": "!=", "<=": ">", ">": "<=", ">=": "<", "<": ">="}
+ERRORISH = re.compile(r"(?i)\berr\w*|error|exception")
+
+
+def summary(fn, name):
+    """First sentences of fn's doc: its docstring, else the comment right above it. "fooBar does X" → "Does X"."""
+    doc = docstring(fn)
+    if doc is None:
+        n = fn
+        while n.parent is not None and n.parent.type in WRAPPERS:
+            n = n.parent
+        lines, prev, top = [], n.prev_sibling, n.start_point[0]
+        while prev is not None and "comment" in prev.type and prev.end_point[0] >= top - 1 and not (
+                prev.prev_sibling is not None and prev.prev_sibling.end_point[0] == prev.start_point[0]):  # trailing
+            lines[:0] = text(prev).splitlines()
+            top, prev = prev.start_point[0], prev.prev_sibling
+        doc = "\n".join(lines)
+    return sentences(doc, name)
+
+
+def sentences(doc, name):
+    """The first two sentences of a doc comment's first paragraph, without comment marks and directives."""
+    para = []
+    for line in doc.splitlines():
+        line = re.sub(r"\s*\*+/\s*$", "", re.sub(r"^\s*(/\*+|\*+/|//[/!]?|#+|--|\*)\s?", "", line)).strip()
+        if DOC_END.match(line) or not line and para:
+            break
+        if line and not DIRECTIVE.match(line):
+            para.append(line)
+    s = " ".join(SENTENCE.split(" ".join(para))[:2])
+    first, _, rest = s.partition(" ")
+    if first.lower() in (name.lower(), name.lower() + "()") and rest[:1].islower():
+        s = rest[0].upper() + rest[1:]
+    return (s if len(s) <= 240 else s[:239] + "…") or None
+
+
+def docstring(fn):
+    """A Python function's docstring, else None."""
+    body = fn.child_by_field_name("body")
+    first = body.named_children[0] if body is not None and body.named_children else None
+    if first is not None and first.type == "expression_statement":
+        first = first.named_children[0]
+    if first is None or first.type != "string":
+        return None
+    return re.sub(r"^[rRuUbB]*(\"\"\"|'''|\"|')|(\"\"\"|'''|\"|')$", "", text(first))
+
+
+def call_sites(fn):
+    """[(callee name, receiver's last word, line, when, loop)] of the calls in fn, in source order. Calls in nested
+    named functions are theirs; an unnamed closure (callback, goroutine) runs as part of fn."""
+    out, todo = [], [fn]
+    while todo:
+        n = todo.pop()
+        if n is not fn and n.type in FUNCS and not (n.type in CLOSURES and assigned_name(n) is None):
+            continue
+        if n.type in CALLS:
+            name, recv = Walk.callee(n)
+            if name and name not in PROTOCOL and not words(recv) & NOISE_WORDS:
+                out.append((n.start_byte, name, (re.findall(r"\w+", recv) or [""])[-1], n.start_point[0] + 1,
+                            *guard(n, fn)))
+        todo += n.named_children
+    return [s[1:] for s in sorted(out)]
+
+
+def guard(n, fn):
+    """(when, loop) of the call n inside fn: the branches it sits in and the guard clauses before it (`if x { return }`
+    means "not: x"; error checks are left out), innermost first; and the innermost loop around it."""
+    when, loop, child, p = [], None, n, n.parent
+    while p is not None and p != fn:
+        prev = child.prev_named_sibling
+        while prev is not None:
+            if prev.type in IFS and exits(prev) and not ERRORISH.search(
+                    c := text(prev.child_by_field_name("condition"))):
+                when.append(negate(unparen(c)))
+            prev = prev.prev_named_sibling
+        t = p.type
+        if t in IFS or t in ELSE_IFS:
+            cond = p.child_by_field_name("condition")
+            alts = p.children_by_field_name("alternative")
+            if cond is not None and child not in (cond, p.child_by_field_name("initializer")):
+                when += [negate(unparen(text(e.child_by_field_name("condition")))) for e in reversed(alts)
+                         if e.type in ELSE_IFS and e.start_byte < child.start_byte]   # Python: earlier elifs
+                c = unparen(text(cond))
+                when.append(negate(c) if (child in alts) != t.startswith("unless") else c)
+        elif t in CASES and child not in (p.child_by_field_name("value"), p.child_by_field_name("pattern")):
+            label = re.match(r"\s*(?:case\s+|when\s+)?(.*?)\s*(?::(?!=)|=>|->|\bthen\b|$)", text(p).split("\n")[0])[1]
+            switch = p.parent if p.parent is not None and p.parent.type in SWITCHES else p.parent and p.parent.parent
+            subject = switch and (switch.child_by_field_name("value") or switch.child_by_field_name("subject")
+                                  or switch.child_by_field_name("condition"))
+            when.append(f"{unparen(text(subject))}: {label}" if subject is not None else label or "default")
+        elif t in CATCHES:
+            when.append("on error")
+        elif loop is None and t in LOOPS and child == (p.child_by_field_name("body") or p.named_children[-1]):
+            loop = text(p)[:child.start_byte - p.start_byte]
+        elif loop is None and t in CALLS and Walk.callee(p)[0] in ITERATORS and child.start_byte > p.start_byte:
+            loop = text(p)[:child.start_byte - p.start_byte]   # xs.forEach(x => …)
+        child, p = p, p.parent
+    return when, short(loop).rstrip(" {:(") if loop else None
+
+
+def exits(stmt):
+    """True for an if without else whose branch ends in return, throw, continue or break: a guard clause."""
+    if stmt.child_by_field_name("alternative") is not None or stmt.child_by_field_name("condition") is None:
+        return False
+    last = stmt.child_by_field_name("consequence")
+    while last is not None and last.type not in JUMPS and last.named_children:
+        last = last.named_children[-1]
+    return last is not None and last.type in JUMPS
+
+
+def negate(c):
+    """c negated readably: without its leading ! / not, or with its one comparison flipped, else "not: c"."""
+    if not re.search(r"&&|\|\||\band\b|\bor\b|\?", c):
+        if m := re.fullmatch(r"(?:!|not\s+)\s*([\w.]+(?:\(.*\))?)", c):
+            return m[1]
+        ops = list(COMPARE.finditer(c))
+        if len(ops) == 1:
+            op = ops[0][1] or ops[0][2]
+            return c[:ops[0].start(ops[0].lastindex)] + FLIP[op] + c[ops[0].end(ops[0].lastindex):]
+    return "not: " + c
+
+
+def short(s):
+    s = " ".join(s.split())
+    return s if len(s) <= MAX_GUARD else s[:MAX_GUARD - 1] + "…"
+
+
+def code_effects(x):
+    """The outside systems a function's x-ray calls, one entry per (kind, target, op)."""
+    out = {}
+    for n in x.get("nodes", []) if x.get("status") == "ready" else []:
+        if n["kind"] == "effect":
+            callee = n.get("callee") or ""
+            op = "writes" if WRITE_VERB.match(callee) else "reads" if READ_VERB.match(callee) else "calls"
+            kind, target = effect_kind(n), n.get("target") or callee_text(n)
+            out.setdefault((kind, target, op), {"kind": kind, "target": target, "op": op, "line": n["line"]})
+    return list(out.values())
 
 
 # ---------------------------------------------------------------- control-flow changes
