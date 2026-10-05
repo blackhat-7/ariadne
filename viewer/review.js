@@ -477,9 +477,9 @@ const fmtTok = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Mat
 function mapBanner() {
   const m = R.map, p = m?.progress; if (!m) return '';
   if (p && !p.done) {
-    const [d, t] = p.batches || [0, 0], pct = t ? Math.max(4, (100 * d) / t) : 4;
     const cfg = state.chatCfg || {}, who = m.needs_model && cfg.agent ? ` · ${cfg.agent}${cfg.model ? ` · ${cfg.model}` : ''}` : '';
-    return `<div class="rv-banner run"><b>Updating the map for this change: ${esc(p.phase || 'working')}…</b><div class="rv-bar"><i style="width:${pct}%"></i></div><span>${esc((m.parts || []).join(', '))}${esc(who)} · ${t ? `${d}/${t} batches · ` : ''}${fmtSecs(p.elapsed || 0)}</span></div>`;
+    const what = { 'checking out': 'Checking out this version', mapping: `Mapping ${(m.parts || []).join(', ')}`, assembling: 'Naming domains and flows', loading: 'Loading the new map' }[p.phase] || 'Preparing';
+    return `<div class="rv-banner run"><b>Updating the map for this change</b><div class="rv-bar"><i style="width:${progressPct(m, p).toFixed(1)}%"></i></div><span>${esc(what)}${p.phase === 'mapping' ? ` · ${p.reads || 0} files read` : ''}${esc(who)} · ${fmtSecs(p.elapsed || 0)}</span></div>`;
   }
   if (p?.error || m.error) return `<div class="rv-banner error">${I.info}<div><b>The map update failed.</b><div class="rv-err">${esc(p?.error || m.error)}</div><button class="btn" data-rv="remap">${I.replay}Try again</button></div></div>`;
   if (m.current) return '';
@@ -513,14 +513,25 @@ async function remap() {
 }
 
 // Poll a running map job; when it is done, reload with the same camera and review (the hash keeps the review).
+// Each stage owns a stretch of the bar and eases across it over its usual time, never reaching its end before the
+// stage really ends; finished mapping batches push it along too. [start %, end %, usual seconds]
+const STAGES = { preparing: [0, 4, 3], 'checking out': [4, 8, 6], mapping: [8, 78, 0], assembling: [78, 96, 45], loading: [96, 100, 4] };
+function progressPct(m, p) {
+  const [a, b, usual] = STAGES[p.phase] || STAGES.preparing;
+  const t = (Date.now() - (m.phaseAt || Date.now())) / 1000, typical = p.phase === 'mapping' ? (m.est_seconds[0] + m.est_seconds[1]) / 2 * 0.7 : usual;
+  const f = Math.min(0.95, Math.max(1 - Math.exp(-1.2 * t / Math.max(1, typical)), p.batches?.[1] ? 0.95 * p.batches[0] / p.batches[1] : 0));
+  return a + (b - a) * f;
+}
+
 async function watchMap() {
   const m = R.map;
   if (m.watching) return;
   m.watching = true;
   for (;;) {
-    await new Promise((res) => setTimeout(res, 1500));
+    await new Promise((res) => setTimeout(res, 1000));
     let p; try { p = await getJSON('/api/map/progress'); } catch { continue; }
     if (R.map !== m) return;
+    if (p.phase !== m.phase) { m.phase = p.phase; m.phaseAt = Date.now(); }
     m.progress = p; render();
     if (p.error) { m.watching = false; return; }
     if (p.done) break;
