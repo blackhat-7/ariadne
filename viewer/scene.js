@@ -466,7 +466,7 @@ export function buildDetail(p) {
   });
   const top = flows.map((_, k) => k).filter((k) => !parent[k]).sort((a, b) => fails[a] - fails[b]);
   const slots = top.reduce((n, k) => n + (flows[k].steps || []).length + 2, 0);   // a flow: its title chip, its steps, a gap
-  const rr = Math.max(p.r + 5.5, (slots * 2.6) / (Math.PI * 2)), y = p.pos.y + 1.5, DEPTH = 7;
+  const rr = Math.max(p.r + 5.5, (slots * 2.6) / (Math.PI * 2)), y = p.pos.y + 1.5, DEPTH = 5.5;
   p.detailNodes = []; p.detailLabels = []; p.flowInfo = [];
   const at = (th, r) => new V3(p.pos.x + Math.cos(th) * r, y, p.pos.z + Math.sin(th) * r);
   const arc = (t0, t1, r) => Array.from({ length: 7 }, (_, i) => at(t0 + ((t1 - t0) * i) / 6, r));
@@ -534,10 +534,11 @@ export function buildDetail(p) {
 }
 
 // A ring label points away from its part on screen, so the ring reads like a clock face; on the left it is mirrored
-// (class l) so the step number sits by its bead.
-function faceOut(L, p, cam) {
-  const dx = L.pos.x - p.pos.x, dz = L.pos.z - p.pos.z, sx = (dx * cam[0] + dz * cam[2]) / p.ring;
-  const m = sx > 0.2 ? 'right' : sx < -0.2 ? 'left' : dx * cam[4] + dz * cam[6] > 0 ? 'above' : 'below';
+// (class l) so the step number sits by its bead. A flow title at the top or bottom points back along the ring
+// (counter-clockwise), clear of its own first steps.
+function faceOut(L, p, cam, title) {
+  const dx = L.pos.x - p.pos.x, dz = L.pos.z - p.pos.z, sx = (dx * cam[0] + dz * cam[2]) / p.ring, up = dx * cam[4] + dz * cam[6] > 0;
+  const m = sx > 0.2 ? 'right' : sx < -0.2 ? 'left' : title ? (up ? 'left' : 'right') : up ? 'above' : 'below';
   if (m !== L.mode) { L.mode = m; L.el.classList.toggle('l', m === 'left'); }
 }
 
@@ -698,7 +699,7 @@ export function updateLOD(dt) {
     }
     for (let k = 0; k < p.flowInfo.length; k++) {
       const fi = p.flowInfo[k], cur = player.part === p && player.k === k ? player.i : -1;   // the step playing, if any
-      if (lu > 0.01) faceOut(fi.title, p, cam);
+      if (lu > 0.01) faceOut(fi.title, p, cam, true);
       fi.title.want = lu * (1 - smooth(Math.max(40, p.focusDist * 1.8), Math.max(64, p.focusDist * 2.6), camPos.distanceTo(fi.title.pos)));
       for (const s of fi.spine) trackSet.setAlpha(s, u * (fi.alt ? 0.22 : 0.5), tracksPulse);
       for (let i = 0; i < fi.steps.length; i++) if (fi.steps[i].seg) trackSet.setAlpha(fi.steps[i].seg, u * (i === cur ? 0.9 : 0.2), i === cur ? 1 : 0);
